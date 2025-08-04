@@ -1,5 +1,6 @@
 const db = require("./db");
 const { User } = require("./index");
+const { Hunt } = require("./hunt");
 
 const seed = async () => {
   try {
@@ -10,6 +11,36 @@ const seed = async () => {
       { username: "admin", passwordHash: User.hashPassword("admin123") },
       { username: "user1", passwordHash: User.hashPassword("user111") },
       { username: "user2", passwordHash: User.hashPassword("user222") },
+    ]);
+
+    const hunts = await Hunt.bulkCreate([
+      {
+        id: 1,
+        creator_id: 1,
+        title: "First Hunt",
+        isActive: true,
+        isPublished: true,
+        accessCode: "Hunt1",
+        oroginalHuntId: null,
+      },
+      {
+        id: 2,
+        creator_id: 1,
+        title: "Second Hunt",
+        isActive: true,
+        isPublished: true,
+        accessCode: "Hunt2",
+        oroginalHuntId: null,
+      },
+      {
+        id: 3,
+        creator_id: 1,
+        title: "Third Hunt",
+        isActive: true,
+        isPublished: true,
+        accessCode: "Hunt3",
+        oroginalHuntId: null,
+      },
     ]);
 
     console.log(`👤 Created ${users.length} users`);
