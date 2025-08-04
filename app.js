@@ -7,7 +7,7 @@ const cookieParser = require("cookie-parser");
 const app = express();
 const apiRouter = require("./api");
 const { router: authRouter } = require("./auth");
-const { db } = require("./database");
+const db = require("./database/db");
 const cors = require("cors");
 const initSocketServer = require("./socket-server");
 const PORT = process.env.PORT || 8080;
@@ -39,7 +39,11 @@ app.use((err, req, res, next) => {
 
 const runApp = async () => {
   try {
-    await db.sync();
+    require("./database/user");
+    require("./database/hunt");
+
+    await db.sync({ alter: true });
+
     console.log("✅ Connected to the database");
     const server = app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT}`);

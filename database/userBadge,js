@@ -1,0 +1,29 @@
+const { DataTypes } = require("sequelize");
+const sequelize = require("./db");
+
+const UserBadge = sequelize.define("UserBadge", {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  },
+  user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  badge_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  earned_at: DataTypes.DATE,
+}, {
+  tableName: "user_badges",
+  timestamps: false,
+  indexes: [
+    {
+      fields: ["user_id", "badge_id"],
+    },
+  ],
+});
+
+module.exports = UserBadge;
