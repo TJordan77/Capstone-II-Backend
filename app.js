@@ -8,6 +8,7 @@ const cors = require("cors");
 const app = express();
 const apiRouter = require("./api");
 const { router: authRouter } = require("./auth");
+const db = require("./database/db"); //Test this
 const adminRoutes = require("./api/admin");
 const { db } = require("./database");
 const initSocketServer = require("./socket-server");
@@ -53,7 +54,13 @@ app.use((err, req, res, next) => {
 
 const runApp = async () => {
   try {
-    await db.sync();
+    // Note: no need to require all the models like this, just use ./database to call them all
+    // Make sure they're centralized in database/index.js and we're good
+    require("./database/user");
+    require("./database/hunt");
+
+    await db.sync({ alter: true });
+
     console.log("✅ Connected to the database");
     const server = app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT}`);
