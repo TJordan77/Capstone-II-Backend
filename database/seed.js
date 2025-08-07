@@ -8,9 +8,9 @@ const seed = async () => {
     await db.sync({ force: true }); // Drop and recreate tables
 
     const users = await User.bulkCreate([
-      { username: "admin", passwordHash: User.hashPassword("admin123") },
-      { username: "user1", passwordHash: User.hashPassword("user111") },
-      { username: "user2", passwordHash: User.hashPassword("user222") },
+      { firstName: "admin", lastName:"", username: "admin", passwordHash: User.hashPassword("admin123") },
+      { firstName: "user1", lastName:"", username: "user1", passwordHash: User.hashPassword("user111") },
+      { firstName: "user2", lastName:"", username: "user2", passwordHash: User.hashPassword("user222") },
     ]);
 
     const hunts = await Hunt.bulkCreate([
