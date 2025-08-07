@@ -1,6 +1,8 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { User } = require("../database");
+const { OAuth2Client } = require("google-auth-library");
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = express.Router();
 
@@ -100,6 +102,48 @@ router.post("/auth0", async (req, res) => {
   } catch (error) {
     console.error("Auth0 authentication error:", error);
     res.sendStatus(500);
+  }
+});
+
+// Google OAuth Route - Validates Google ID Token from frontend
+router.post("/google", async (req, res) => {
+  try {
+    const { id_token } = req.body;
+    if (!id_token) return res.status(400).json({ error: "Missing ID token" });
+
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload(); // contains email, name, etc.
+    const { email, sub: googleId, name } = payload;
+
+    // Lookup or create user
+    let user = await User.findOne({ where: { email } });
+
+    if (!user) {
+      user = await User.create({
+        email,
+        username: name || email.split("@")[0],
+        passwordHash: null,
+        auth0Id: googleId, // reuse this field to store the Google ID
+      });
+    }
+
+    // Sign JWT and send token cookie
+    const token = jwt.sign(
+      { id: user.id, username: user.username, email: user.email },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.cookie("token", token, cookieSettings);
+    res.send({ message: "Google login successful", user });
+  } catch (err) {
+    console.error("Google OAuth error:", err);
+    res.status(401).json({ error: "Invalid Google token" });
   }
 });
 
