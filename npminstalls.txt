@@ -1,0 +1,11 @@
+npm install                     # Install dependencies from package.json
+npm install express nodemon     # Express server + Nodemon for auto-restarts
+npm install react-router-dom    # React SPA routing
+
+npm install axios               # API calls from frontend to backend
+npm install react-icons         # FontAwesome / Material UI icons
+npm install leaflet             # Core mapping library (open-source maps)
+npm install react-leaflet       # React wrapper around Leaflet maps
+
+npm install -D vite @vitejs/plugin-react  # Dev-only: Vite bundler + React plugin
+npm install google-auth-library           # Google ID token verification on backend
