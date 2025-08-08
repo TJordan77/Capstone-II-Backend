@@ -1,54 +1,11 @@
 const sequelize = require("./db");
 
-const User = require("./user");
-const Hunt = require("./hunt");
-
-// Associations for User and Hunt models
-User.hasMany(Hunt, { foreignKey: "creator_id" });
-Hunt.belongsTo(User, { foreignKey: "creator_id" });
-
-// many users can participate in many hunts - joint table
-User.belongsToMany(Hunt, {
-  through: "UserHunts",
-  foreignKey: "user_id",
-  otherKey: "hunt_id",
-});
-
-Hunt.belongsToMany(User, {
-  through: "UserHunts",
-  foreignKey: "hunt_id",
-  otherKey: "user_id",
-});
-
-Hunt.belongsTo(Hunt, {
-  as: "OriginalHunt",
-  foreignKey: "original_hunt_id",
-});
-
-Hunt.hasMany(Hunt, {
-  as: "Versions",
-  foreignKey: "original_hunt_id",
-});
-
-sequelize
-  .sync({ alter: true })
-  .then(() => {
-    console.log("✅ Tables synced");
-    process.exit();
-  })
-  .catch((err) => {
-    console.error("❌ Sync error:", err);
-    process.exit(1);
-  });
-
-/*
-
-  const sequelize = require("./db");
-
 // Models
 const User = require("./user");
 const Hunt = require("./hunt");
 const UserHunt = require("./userHunt");
+const Checkpoint = require("./checkpoint");
+const Badge = require("./badge");
 const CheckpointAttempt = require("./checkpointAttempt");
 const HuntInvite = require("./huntInvite");
 const Friend = require("./friend");
@@ -60,9 +17,6 @@ const Media = require("./media");
 const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
-
-const Checkpoint = require("./checkpoint");
-const Badge = require("./badge");
 
 // Associations
 User.hasMany(Hunt, { foreignKey: "creator_id" });
@@ -108,17 +62,21 @@ Hunt.hasMany(HuntAdmin, { foreignKey: "hunt_id" });
 User.hasMany(HuntAdmin, { foreignKey: "user_id" });
 User.hasMany(HuntAdmin, { foreignKey: "assigned_by", as: "AssignedAdmins" });
 
-sequelize
-  .sync({ alter: true }) // Use force: true only during dev seeding
-  .then(() => {
-    console.log("✅ Tables synced");
-    process.exit();
-  })
-  .catch((err) => {
-    console.error("❌ Sync error:", err);
-    process.exit(1);
-  });
+Hunt.hasMany(Checkpoint, { foreignKey: "huntId" });
+Checkpoint.belongsTo(Hunt, { foreignKey: "huntId" });
 
+Checkpoint.belongsTo(Hunt, { foreignKey: "hunt_id" });
+Badge.belongsTo(Checkpoint, { foreignKey: "checkpoint_id" });
+
+Checkpoint.hasOne(Badge, { foreignKey: "checkpointId" });
+Badge.belongsTo(Checkpoint, { foreignKey: "checkpointId" });
+
+// Sync only when running directly (optional)
+// sequelize.sync({ alter: true })
+//   .then(() => console.log("✅ Tables synced"))
+//   .catch((err) => console.error("❌ Sync error:", err));
+
+// Export for use in seed.js and elsewhere
 module.exports = {
   sequelize,
   User,
@@ -138,4 +96,3 @@ module.exports = {
   Checkpoint,
   Badge,
 };
-*/

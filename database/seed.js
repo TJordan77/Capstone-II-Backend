@@ -1,61 +1,91 @@
-const db = require("./db");
-const { User } = require("./index");
-const { Hunt } = require("./hunt");
+const { sequelize, User, Hunt, Checkpoint, Badge } = require("./index");
 
-const seed = async () => {
+async function seed() {
   try {
-    db.logging = false;
-    await db.sync({ force: true }); // Drop and recreate tables
+    await sequelize.sync({ force: true }); // use sequelize, not db
+    console.log("🌱 Database synced");
 
-    const users = await User.bulkCreate([
-      { firstName: "admin", lastName:"", username: "admin", passwordHash: User.hashPassword("admin123") },
-      { firstName: "user1", lastName:"", username: "user1", passwordHash: User.hashPassword("user111") },
-      { firstName: "user2", lastName:"", username: "user2", passwordHash: User.hashPassword("user222") },
-    ]);
+    // Create users
+    const admin = await User.create({
+      firstName: "Alice",
+      lastName: "Admin",
+      username: "admin1",
+      email: "admin@example.com",
+      passwordHash: User.hashPassword("admin123"),
+      role: "admin",
+      profilePicture: "",
+      badgeCount: 0,
+    });
 
-    const hunts = await Hunt.bulkCreate([
-      {
-        id: 1,
-        creator_id: 1,
-        title: "First Hunt",
-        isActive: true,
-        isPublished: true,
-        accessCode: "Hunt1",
-        oroginalHuntId: null,
-      },
-      {
-        id: 2,
-        creator_id: 1,
-        title: "Second Hunt",
-        isActive: true,
-        isPublished: true,
-        accessCode: "Hunt2",
-        oroginalHuntId: null,
-      },
-      {
-        id: 3,
-        creator_id: 1,
-        title: "Third Hunt",
-        isActive: true,
-        isPublished: true,
-        accessCode: "Hunt3",
-        oroginalHuntId: null,
-      },
-    ]);
+    const creator = await User.create({
+      firstName: "Charlie",
+      lastName: "Creator",
+      username: "creator1",
+      email: "creator@example.com",
+      passwordHash: User.hashPassword("creator123"),
+      role: "creator",
+      profilePicture: "",
+      badgeCount: 0,
+    });
 
-    console.log(`👤 Created ${users.length} users`);
+    const player = await User.create({
+      firstName: "Penny",
+      lastName: "Player",
+      username: "player1",
+      email: "player@example.com",
+      passwordHash: User.hashPassword("player123"),
+      role: "player",
+      profilePicture: "",
+      badgeCount: 0,
+    });
 
-    // Create more seed data here once you've created your models
-    // Seed files are a great way to test your database schema!
+    // Create a hunt
+    const hunt = await Hunt.create({
+      title: "Downtown Mystery Hunt",
+      description: "A GPS scavenger challenge across city landmarks.",
+      isActive: true,
+      creatorId: creator.id,
+    });
 
-    console.log("🌱 Seeded the database");
-  } catch (error) {
-    console.error("Error seeding database:", error);
-    if (error.message.includes("does not exist")) {
-      console.log("\n🤔🤔🤔 Have you created your database??? 🤔🤔🤔");
-    }
+    // Create checkpoints
+    const cp1 = await Checkpoint.create({
+      huntId: hunt.id,
+      order: 1,
+      riddle: "Find the place where books are free and stories live forever.",
+      hint: "Public library entrance",
+      lat: 40.7128,
+      lng: -74.006,
+    });
+
+    const cp2 = await Checkpoint.create({
+      huntId: hunt.id,
+      order: 2,
+      riddle: "Next stop: where love locks line the rails and rivers flow below.",
+      hint: "Footbridge with locks",
+      lat: 40.7131,
+      lng: -74.007,
+    });
+
+    // Create badges
+    await Badge.create({
+      checkpointId: cp1.id,
+      title: "Story Seeker",
+      description: "Unlocked the library clue!",
+      image: "/badges/library.png",
+    });
+
+    await Badge.create({
+      checkpointId: cp2.id,
+      title: "Bridge Breaker",
+      description: "Found the hidden clue by the river!",
+      image: "/badges/bridge.png",
+    });
+
+     } catch (err) {
+    console.error("❌ Seed error:", err);
+  } finally {
+    await sequelize.close();
   }
-  db.close();
-};
+}
 
 seed();
