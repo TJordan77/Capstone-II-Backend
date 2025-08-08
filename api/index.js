@@ -1,7 +1,10 @@
-const express = require("express");
-const router = express.Router();
-const testDbRouter = require("./test-db");
+const express = require('express');
+const apiRouter = express.Router();
+const huntRouter = require('../routes/huntRoutes');
+const checkpointRouter = require('../routes/checkpointRoutes');
 
-router.use("/test-db", testDbRouter);
 
-module.exports = router;
+apiRouter.use('/hunts', huntRouter);
+apiRouter.use('/checkpoints', checkpointRouter);
+
+module.exports = apiRouter;
