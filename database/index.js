@@ -79,6 +79,7 @@ Badge.belongsTo(Checkpoint, { foreignKey: "checkpointId" });
 // Export for use in seed.js and elsewhere
 module.exports = {
   sequelize,
+  db: sequelize,
   User,
   Hunt,
   UserHunt,
