@@ -1,10 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "app.js": {
-      "runtime": "nodejs20",
-      "includeFiles": ["node_modules/pg/**/*", "node_modules/pg-hstore/**/*"]
-    }
+    "app.js": { "runtime": "nodejs20" }
   },
   "routes": [{ "src": "/(.*)", "dest": "app.js" }]
 }
