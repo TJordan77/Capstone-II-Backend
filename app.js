@@ -56,15 +56,23 @@ const runApp = async () => {
     require("./database/user");
     require("./database/hunt");
 
-    await db.sync({ alter: true });
-
-    console.log("✅ Connected to the database");
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 Server is running on port ${PORT}`);
-    });
-
-    // initSocketServer(server); // Commented out so sockets don't go on startup
-    // console.log("🧦 Socket server initialized");
+   // On Vercel (serverless), just authenticate. Locally, sync as before.
+    if (require.main === module) {
+      await db.sync({ alter: true });
+      console.log("✅ DB synced (local dev)");
+    } else {
+      await db.authenticate();
+      console.log("✅ DB authenticated (serverless)");
+    }
+    
+    // Only start the HTTP server when running locally
+    if (require.main === module) {
+      const server = app.listen(PORT, () => {
+        console.log(`🚀 Server is running on port ${PORT}`);
+      });
+      // sockets only in standalone local mode
+      // initSocketServer(server);
+    }
   } catch (err) {
     console.error("❌ Unable to connect to the database:", err);
   }
