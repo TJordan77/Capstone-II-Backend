@@ -4,24 +4,18 @@ const sequelize = require("./db");
 const AuditLog = sequelize.define(
   "AuditLog",
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
-    actor_type: DataTypes.STRING, // 'user', 'admin'
-    actor_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    action: DataTypes.STRING,
-    target_table: DataTypes.STRING,
-    target_id: DataTypes.INTEGER,
-    timestamp: DataTypes.DATE,
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    actorType: { type: DataTypes.STRING, field: "actor_type" }, // 'user', 'admin'
+    actorId: { type: DataTypes.INTEGER, allowNull: false, field: "actor_id" },
+    action: { type: DataTypes.STRING },
+    targetTable: { type: DataTypes.STRING, field: "target_table" },
+    targetId: { type: DataTypes.INTEGER, field: "target_id" },
+    timestamp: { type: DataTypes.DATE },
   },
   {
     tableName: "audit_logs",
     timestamps: false,
+    indexes: [{ fields: ["actor_id"] }, { fields: ["target_table", "target_id"] }],
   }
 );
 

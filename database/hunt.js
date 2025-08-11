@@ -4,53 +4,40 @@ const sequelize = require("./db");
 const Hunt = sequelize.define(
   "Hunt",
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
-    creator_id: {
-      type: DataTypes.INTEGER,
-      references: {
-        model: "users",
-        key: "id",
-      },
-    },
-    title: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-    description: DataTypes.TEXT,
-    is_published: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-    is_active: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    access_code: {
-      type: DataTypes.STRING,
-      unique: true,
-    },
-    version: {
-      type: DataTypes.INTEGER,
-      defaultValue: 1,
-    },
-    original_hunt_id: {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+
+    creatorId: {
       type: DataTypes.INTEGER,
       allowNull: true,
-      references: {
-        model: "hunts",
-        key: "id",
-      },
+      field: "creator_id",
+      references: { model: "users", key: "id" },
     },
-    created_at: DataTypes.DATE,
-    updated_at: DataTypes.DATE,
+
+    title: { type: DataTypes.STRING, allowNull: false },
+    description: { type: DataTypes.TEXT },
+
+    isPublished: { type: DataTypes.BOOLEAN, defaultValue: false, field: "is_published" },
+    isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: "is_active" },
+
+    accessCode: { type: DataTypes.STRING, unique: true, field: "access_code" },
+
+    version: { type: DataTypes.INTEGER, defaultValue: 1 },
+
+    originalHuntId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: "original_hunt_id",
+      references: { model: "hunts", key: "id" },
+    },
   },
   {
     tableName: "hunts",
-    timestamps: false,
+    timestamps: true,
+    indexes: [
+      { unique: true, fields: ["access_code"] },
+      { fields: ["creator_id"] },
+      { fields: ["original_hunt_id"] },
+    ],
   }
 );
 
