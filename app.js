@@ -78,12 +78,24 @@ module.exports = app;
 // We're going to gate the listener (and sockets) so they only run locally.
 // Only start the server & sockets when running locally (node app.js)
 if (require.main === module) {
-  const PORT = process.env.PORT || 8080;
-  const server = app.listen(PORT, () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
-  });
+  (async () => {
+    try {
+      // dev-only sync; skip in production/serverless
+      if (process.env.NODE_ENV !== 'production') {
+        await db.sync({ alter: true });
+      } else {
+        await db.authenticate();
+      }
+      const PORT = process.env.PORT || 8080;
+      const server = app.listen(PORT, () => {
+        console.log(`🚀 Server listening on ${PORT}`);
+      });
 
-  // sockets only in standalone mode
-  const initSocketServer = require("./socket-server");
-  initSocketServer(server);
+      // sockets only in standalone local mode
+      // const initSocketServer = require("./socket-server");
+      // initSocketServer(server);
+    } catch (err) {
+      console.error("❌ Unable to start locally:", err);
+    }
+  })();
 }
