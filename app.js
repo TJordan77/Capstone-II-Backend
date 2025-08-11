@@ -64,7 +64,7 @@ const runApp = async () => {
       await db.authenticate();
       console.log("✅ DB authenticated (serverless)");
     }
-    
+
     // Only start the HTTP server when running locally
     if (require.main === module) {
       const server = app.listen(PORT, () => {
@@ -81,29 +81,3 @@ const runApp = async () => {
 runApp();
 
 module.exports = app;
-
-// Vercel’s Node runtime handles the server. 
-// We're going to gate the listener (and sockets) so they only run locally.
-// Only start the server & sockets when running locally (node app.js)
-if (require.main === module) {
-  (async () => {
-    try {
-      // dev-only sync; skip in production/serverless
-      if (process.env.NODE_ENV !== 'production') {
-        await db.sync({ alter: true });
-      } else {
-        await db.authenticate();
-      }
-      const PORT = process.env.PORT || 8080;
-      const server = app.listen(PORT, () => {
-        console.log(`🚀 Server listening on ${PORT}`);
-      });
-
-      // sockets only in standalone local mode
-      // const initSocketServer = require("./socket-server");
-      // initSocketServer(server);
-    } catch (err) {
-      console.error("❌ Unable to start locally:", err);
-    }
-  })();
-}

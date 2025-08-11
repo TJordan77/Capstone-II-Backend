@@ -6,5 +6,5 @@
       "includeFiles": "node_modules/{pg,pg-hstore}/**/*"
     }
   },
-  "routes": [{ "src": "/(.*)", "dest": "/app.js" }]
+  "routes": [{ "src": "/(.*)", "dest": "app.js" }]
 }
