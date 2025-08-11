@@ -1,10 +1,15 @@
 {
   "version": 2,
-  "functions": {
-    "app.js": {
-      "runtime": "nodejs20.x",
-      "includeFiles": "node_modules/{pg,pg-hstore}/**/*"
+  "builds": [
+    {
+      "src": "app.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": "node_modules/{pg,pg-hstore}/**/*"
+      }
     }
-  },
-  "routes": [{ "src": "/(.*)", "dest": "app.js" }]
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "app.js" }
+  ]
 }
