@@ -6,7 +6,11 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = express.Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+// Validate secret at load time (fail fast if missing)
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is missing (set it in env).");
+}
 
 const cookieSettings = {
   httpOnly: true,
