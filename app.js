@@ -13,7 +13,7 @@ const { router: authRouter } = require("./auth");
 const adminRouter = require("./api/admin");
 const { db } = require("./database");
 // const initSocketServer = require("./socket-server");  // Prevent socket server from going on startup
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 8080;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const { sseMiddleware } = require("./sse");
 
@@ -26,10 +26,6 @@ app.use(helmet({ contentSecurityPolicy: false })); // gonna start with relaxed C
 // See middleware/cors.js for the centralized allow-list & options
 const secureCors = require("./middleware/cors");
 app.use(secureCors); // <— replaces the open regex CORS
-
-// Enforce Origin/Referer on state-changing requests (defense-in-depth against CSRF)
-const originCheck = require("./middleware/originCheck");
-app.use(originCheck);
 
 // Note: certain app.use middleware should be near top in this section
 // body parser middleware
