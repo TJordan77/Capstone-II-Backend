@@ -39,16 +39,19 @@ const { csrfProtection, sendCsrfToken, csrfErrorHandler } = require("./middlewar
 app.use(csrfProtection);
 
 // Note: This route works fine on Vercel; 
-// it streams responses and auto‑reconnects on the client.
+// it streams responses and auto-reconnects on the client.
 // Stream endpoint clients subscribe to:
 app.get("/api/events", sseMiddleware);
 
 app.use(morgan("dev")); // logging middleware
 app.use(express.static(path.join(__dirname, "public"))); // serve static files from public folder
-app.get("/auth/csrf", sendCsrfToken); // Endpoint to fetch a CSRF token (client calls once at app start)
+
+// CHANGED: prefix CSRF endpoint with /api to align with mounted /api/auth routes used by the frontend
+app.get("/api/auth/csrf", sendCsrfToken); // CHANGED
+
 app.use("/api", apiRouter); // mount api router
-app.use("/auth", authRouter); // mount auth router
-app.use("/admin", adminRouter); // mount admin router
+app.use("/api/auth", authRouter); // mount auth router
+app.use("/api/admin", adminRouter); // mount admin router
 
 // CSRF error handler
 app.use(csrfErrorHandler);

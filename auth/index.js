@@ -5,6 +5,15 @@ const { User } = require("../database");
 const { OAuth2Client } = require("google-auth-library");
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+// ADDED: Securely verify Auth0 ID tokens server-side
+// npm i jose  (run this once in your project)
+const { createRemoteJWKSet, jwtVerify } = require("jose");
+const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;           
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;        
+const JWKS = AUTH0_DOMAIN
+  ? createRemoteJWKSet(new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`))
+  : null;                                                 
+
 const router = express.Router();
 
 // Validate secret at load time (fail fast if missing)
@@ -38,13 +47,29 @@ const authenticateJWT = (req, res, next) => {
 };
 
 // Auth0 authentication route
+// ADDED: Now verifies the Auth0 ID token via JWKS instead of trusting client-provided IDs/emails
 router.post("/auth0", oauthLimiter, async (req, res) => {
   try {
-    const { auth0Id, email, username, firstName, lastName } = req.body;
-
-    if (!auth0Id) {
-      return res.status(400).send({ error: "Auth0 ID is required" });
+    const { id_token } = req.body; // ADDED
+    if (!id_token) {
+      return res.status(400).send({ error: "Missing id_token" }); // ADDED
     }
+    if (!JWKS) {
+      return res.status(500).send({ error: "AUTH0_DOMAIN not configured" }); // ADDED
+    }
+
+    // ADDED: Verify the Auth0 ID token
+    const { payload } = await jwtVerify(id_token, JWKS, {
+      issuer: `https://${AUTH0_DOMAIN}/`,
+      audience: AUTH0_AUDIENCE,
+    });
+
+    // ADDED: Extract trusted user info from verified token
+    const auth0Id = payload.sub; // "auth0|xxxx"
+    const email = payload.email || null;
+    const firstName = payload.given_name || "Player";
+    const lastName = payload.family_name || "One";
+    let username = email ? email.split("@")[0] : `user_${Date.now()}`;
 
     // Try to find existing user by auth0Id first
     let user = await User.findOne({ where: { auth0Id } });
@@ -65,7 +90,7 @@ router.post("/auth0", oauthLimiter, async (req, res) => {
       const userData = {
         auth0Id,
         email: email || null,
-        username: username || email?.split("@")[0] || `user_${Date.now()}`, // Use email prefix as username if no username provided
+        username: username, // Use email prefix as username if available
         passwordHash: null, // Auth0 users don't have passwords
         firstName: firstName,
         lastName: lastName,
@@ -94,7 +119,7 @@ router.post("/auth0", oauthLimiter, async (req, res) => {
         lastName: user.lastName,
       },
       JWT_SECRET,
-      { expiresIn: "24h" }
+      { expiresIn: "24h" } // keeping your 24h window
     );
 
     res.cookie("token", token, cookieSettings);
@@ -112,7 +137,7 @@ router.post("/auth0", oauthLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Auth0 authentication error:", error);
-    res.sendStatus(500);
+    return res.status(401).json({ error: "Invalid Auth0 token" }); // ADDED: clearer status for verification failure
   }
 });
 
@@ -140,6 +165,7 @@ router.post("/google", oauthLimiter, async (req, res) => {
         username: name || email.split("@")[0],
         passwordHash: null,
         auth0Id: googleId, // reuse this field to store the Google ID
+        // NOTE: ADDED comment — consider a dedicated column later (e.g., googleId) to avoid provider collisions
       });
     }
 
@@ -186,6 +212,14 @@ router.post("/signup", signupLimiter, async (req, res) => {
       return res.status(409).send({ error: "Username already exists" });
     }
 
+    // ADDED: prevent duplicate email if provided
+    if (email) {
+      const existingByEmail = await User.findOne({ where: { email } }); // ADDED
+      if (existingByEmail) {
+        return res.status(409).send({ error: "Email already in use" }); // ADDED
+      }
+    }
+
     // Create new user
     // CHANGED: include email/firstName/lastName and fix casing bug
     const passwordHash = User.hashPassword(password);
@@ -221,6 +255,7 @@ router.post("/signup", signupLimiter, async (req, res) => {
         username: user.username,
         firstName: user.firstName, // CHANGED
         lastName: user.lastName,   // CHANGED
+        email: user.email,         // ADDED
       },
     });
   } catch (error) {
@@ -232,15 +267,18 @@ router.post("/signup", signupLimiter, async (req, res) => {
 // Login route
 router.post("/login", loginLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    // ADDED: allow either email OR username via "identifier", while keeping your existing "email" support
+    const { identifier, email, password } = req.body; // ADDED
+    const key = identifier || email;                   // ADDED
 
-    if (!email || !password) {
-      res.status(400).send({ error: "Email and password are required" });
+    if (!key || !password) {
+      res.status(400).send({ error: "Email/username and password are required" }); // ADDED
       return;
     }
 
     // Find user  <-- FIXED comment (was "/// Find user")
-    const user = await User.findOne({ where: { email } });
+    const where = key.includes("@") ? { email: key } : { username: key }; // ADDED
+    const user = await User.findOne({ where });
     // CHANGED: guard against null before calling checkPassword
     if (!user) {
       return res.status(401).send({ error: "Invalid credentials" }); // CHANGED
@@ -269,7 +307,7 @@ router.post("/login", loginLimiter, async (req, res) => {
 
     res.send({
       message: "Login successful",
-      user: { id: user.id, username: user.username, firstName: user.firstName, lastName: user.lastName},
+      user: { id: user.id, username: user.username, firstName: user.firstName, lastName: user.lastName, email: user.email }, // ADDED email
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -279,7 +317,13 @@ router.post("/login", loginLimiter, async (req, res) => {
 
 // Logout route
 router.post("/logout", (req, res) => {
-  res.clearCookie("token");
+  // ADDED: clear cookie with same site/secure/path so it actually clears on Vercel
+  res.clearCookie("token", {
+    path: "/",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+  }); // ADDED
   res.send({ message: "Logout successful" });
 });
 
@@ -291,17 +335,24 @@ router.get("/me", (req, res) => {
     return res.send({});
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  // ADDED: fetch the fresh user from DB after verifying token
+  jwt.verify(token, JWT_SECRET, async (err, user) => { // CHANGED: make callback async
     if (err) {
       return res.status(403).send({ error: "Invalid or expired token" });
     }
-  
-    res.send({ user: user,
-      auth0Id: user.auth0Id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-     });
+
+    try {
+      const dbUser = await User.findByPk(user.id, {
+        attributes: ["id", "email", "username", "firstName", "lastName", "auth0Id"],
+      }); // ADDED
+      if (!dbUser) return res.send({}); // ADDED
+
+      // ADDED: return normalized user object
+      res.send({ user: dbUser }); // ADDED
+    } catch (e) {
+      console.error("ME lookup error:", e); // ADDED
+      res.status(500).send({ error: "Server error" }); // ADDED
+    }
   });
 });
 
