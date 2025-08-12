@@ -27,6 +27,10 @@ app.use(helmet({ contentSecurityPolicy: false })); // gonna start with relaxed C
 const secureCors = require("./middleware/cors");
 app.use(secureCors); // <— replaces the open regex CORS
 
+// Enforce Origin/Referer on state-changing requests (defense-in-depth against CSRF)
+const originCheck = require("./middleware/originCheck");
+app.use(originCheck);
+
 // Note: certain app.use middleware should be near top in this section
 // body parser middleware
 app.use(express.json());
