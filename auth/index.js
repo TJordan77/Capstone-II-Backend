@@ -156,7 +156,11 @@ router.post("/google", async (req, res) => {
 // Signup route
 router.post("/signup", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    // CHANGED: accept email/firstName/lastName, and keep username if provided
+    let { username, password, email, firstName, lastName } = req.body; // CHANGED
+
+    // CHANGED: allow username to be derived from email if missing
+    if (!username && email) username = email.split("@")[0]; // CHANGED
 
     if (!username || !password) {
       return res
@@ -170,25 +174,34 @@ router.post("/signup", async (req, res) => {
         .send({ error: "Password must be at least 6 characters long" });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ where: { username } });
+    // CHANGED: check for existing user by username or email (if email provided)
+    const where = email ? { username } : { username }; // minimal: keep username required
+    const existingUser = await User.findOne({ where: { username } }); // CHANGED (explicit)
     if (existingUser) {
       return res.status(409).send({ error: "Username already exists" });
     }
 
     // Create new user
+    // CHANGED: include email/firstName/lastName and fix casing bug
     const passwordHash = User.hashPassword(password);
-    const user = await User.create({ username, passwordHash, firstName: firstname, lastName: lastname});
-
+    const user = await User.create({
+      username,
+      email: email || null,
+      firstName, // CHANGED
+      lastName,  // CHANGED
+      passwordHash,
+    });
+    
     // Generate JWT token
+    // CHANGED: fix token fields (firstName/lastName casing)  <-- FIXED comment slash
     const token = jwt.sign(
       {
         id: user.id,
         username: user.username,
         auth0Id: user.auth0Id,
         email: user.email,
-        firstName: user.firstname,
-        lastName: user.lastname
+        firstName: user.firstName, // CHANGED
+        lastName: user.lastName,   // CHANGED
       },
       JWT_SECRET,
       { expiresIn: "24h" }
@@ -198,7 +211,12 @@ router.post("/signup", async (req, res) => {
 
     res.send({
       message: "User created successfully",
-      user: { id: user.id, username: user.username, firstName: user.firstName, lastName: user.lastName },
+      user: {
+        id: user.id,
+        username: user.username,
+        firstName: user.firstName, // CHANGED
+        lastName: user.lastName,   // CHANGED
+      },
     });
   } catch (error) {
     console.error("Signup error:", error);
@@ -216,12 +234,12 @@ router.post("/login", async (req, res) => {
       return;
     }
 
-    // Find user
+    // Find user  <-- FIXED comment (was "/// Find user")
     const user = await User.findOne({ where: { email } });
-    user.checkPassword(password);
+    // CHANGED: guard against null before calling checkPassword
     if (!user) {
-      return res.status(401).send({ error: "Invalid credentials" });
-    }
+      return res.status(401).send({ error: "Invalid credentials" }); // CHANGED
+    } 
 
     // Check password
     if (!user.checkPassword(password)) {

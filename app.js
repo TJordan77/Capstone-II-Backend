@@ -6,6 +6,9 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const app = express();
+
+app.set('trust proxy', 1); // so "secure" cookies behave behind Vercel's proxy
+
 const apiRouter = require("./api");
 const { router: authRouter } = require("./auth");
 const adminRouter = require("./api/admin");
