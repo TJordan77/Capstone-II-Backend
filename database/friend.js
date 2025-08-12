@@ -4,32 +4,15 @@ const sequelize = require("./db");
 const Friend = sequelize.define(
   "Friend",
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
-    requester_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    reciever_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-    status: DataTypes.STRING,
-    created_at: DataTypes.DATE,
-    updated_at: DataTypes.DATE,
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    requesterId: { type: DataTypes.INTEGER, allowNull: false, field: "requester_id" },
+    receiverId: { type: DataTypes.INTEGER, allowNull: false, field: "receiver_id" }, // fixed typo
+    status: { type: DataTypes.STRING }, // 'pending','accepted','blocked'
   },
   {
     tableName: "friends",
-    timestamps: false,
-    indexes: [
-      {
-        unique: true,
-        fields: ["requester_id", "reciever_id"],
-      },
-    ],
+    timestamps: true, // created_at/updated_at
+    indexes: [{ unique: true, fields: ["requester_id", "receiver_id"] }],
   }
 );
 

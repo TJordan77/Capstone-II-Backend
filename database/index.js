@@ -18,71 +18,209 @@ const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
 
-// Associations
-User.hasMany(Hunt, { foreignKey: "creator_id" });
-Hunt.belongsTo(User, { foreignKey: "creator_id" });
+// Hunt.creator -> User
+Hunt.belongsTo(User, {
+  as: "creator",
+  foreignKey: { name: "creatorId", field: "creator_id" },
+  onDelete: "SET NULL",
+  onUpdate: "CASCADE",
+});
+User.hasMany(Hunt, {
+  as: "createdHunts",
+  foreignKey: { name: "creatorId", field: "creator_id" },
+});
 
+// Hunt versions (self-ref)
+Hunt.belongsTo(Hunt, {
+  as: "originalHunt",
+  foreignKey: { name: "originalHuntId", field: "original_hunt_id" },
+  onDelete: "SET NULL",
+});
+Hunt.hasMany(Hunt, {
+  as: "forks",
+  foreignKey: { name: "originalHuntId", field: "original_hunt_id" },
+});
+
+// User <-> Hunt via UserHunt
 User.belongsToMany(Hunt, {
   through: UserHunt,
-  foreignKey: "user_id",
-  otherKey: "hunt_id",
+  foreignKey: { name: "userId", field: "user_id" },
+  otherKey: { name: "huntId", field: "hunt_id" },
+  as: "joinedHunts",
 });
 Hunt.belongsToMany(User, {
   through: UserHunt,
-  foreignKey: "hunt_id",
-  otherKey: "user_id",
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  otherKey: { name: "userId", field: "user_id" },
+  as: "players",
 });
 
-Hunt.belongsTo(Hunt, {
-  as: "OriginalHunt",
-  foreignKey: "original_hunt_id",
+// Checkpoints belong to Hunts
+Checkpoint.belongsTo(Hunt, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
 });
-Hunt.hasMany(Hunt, {
-  as: "Versions",
-  foreignKey: "original_hunt_id",
+Hunt.hasMany(Checkpoint, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  as: "checkpoints",
 });
 
-User.hasMany(Friend, { foreignKey: "requester_id", as: "RequestedFriends" });
-User.hasMany(Friend, { foreignKey: "reciever_id", as: "ReceivedFriends" });
+// Badges belong to Checkpoints
+Badge.belongsTo(Checkpoint, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  onDelete: "CASCADE",
+  onUpdate: "CASCADE",
+});
+Checkpoint.hasOne(Badge, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  as: "badge",
+});
 
-User.hasMany(UserBadge, { foreignKey: "user_id" });
-UserBadge.belongsTo(User, { foreignKey: "user_id" });
+// User <-> Badge via UserBadge
+User.belongsToMany(Badge, {
+  through: UserBadge,
+  foreignKey: { name: "userId", field: "user_id" },
+  otherKey: { name: "badgeId", field: "badge_id" },
+  as: "badges",
+});
+Badge.belongsToMany(User, {
+  through: UserBadge,
+  foreignKey: { name: "badgeId", field: "badge_id" },
+  otherKey: { name: "userId", field: "user_id" },
+  as: "owners",
+});
 
-Hunt.hasMany(LeaderboardEntry, { foreignKey: "hunt_id" });
-User.hasMany(LeaderboardEntry, { foreignKey: "user_id" });
+// Attempts belong to UserHunt & Checkpoint
+CheckpointAttempt.belongsTo(UserHunt, {
+  foreignKey: { name: "userHuntId", field: "user_hunt_id" },
+  onDelete: "CASCADE",
+});
+UserHunt.hasMany(CheckpointAttempt, {
+  foreignKey: { name: "userHuntId", field: "user_hunt_id" },
+  as: "attempts",
+});
 
-Hunt.hasMany(HuntFeedback, { foreignKey: "hunt_id" });
-User.hasMany(HuntFeedback, { foreignKey: "user_id" });
+CheckpointAttempt.belongsTo(Checkpoint, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  onDelete: "CASCADE",
+});
+Checkpoint.hasMany(CheckpointAttempt, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  as: "attempts",
+});
 
-User.hasMany(Notification, { foreignKey: "user_id" });
+// Leaderboard entries (per hunt/user)
+LeaderboardEntry.belongsTo(Hunt, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+});
+LeaderboardEntry.belongsTo(User, {
+  foreignKey: { name: "userId", field: "user_id" },
+});
+Hunt.hasMany(LeaderboardEntry, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  as: "leaderboard",
+});
+User.hasMany(LeaderboardEntry, {
+  foreignKey: { name: "userId", field: "user_id" },
+  as: "leaderboardEntries",
+});
 
-User.hasMany(Media, { foreignKey: "uploaded_by" });
+// Feedback
+HuntFeedback.belongsTo(Hunt, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+});
+HuntFeedback.belongsTo(User, {
+  foreignKey: { name: "userId", field: "user_id" },
+});
+Hunt.hasMany(HuntFeedback, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  as: "feedback",
+});
+User.hasMany(HuntFeedback, {
+  foreignKey: { name: "userId", field: "user_id" },
+  as: "feedbackGiven",
+});
 
-Hunt.hasMany(HuntAdmin, { foreignKey: "hunt_id" });
-User.hasMany(HuntAdmin, { foreignKey: "user_id" });
-User.hasMany(HuntAdmin, { foreignKey: "assigned_by", as: "AssignedAdmins" });
+// Notifications
+Notification.belongsTo(User, {
+  foreignKey: { name: "userId", field: "user_id" },
+});
+User.hasMany(Notification, {
+  foreignKey: { name: "userId", field: "user_id" },
+  as: "notifications",
+});
 
-Hunt.hasMany(Checkpoint, { foreignKey: "huntId" });
-Checkpoint.belongsTo(Hunt, { foreignKey: "huntId" });
+// Media
+Media.belongsTo(User, {
+  foreignKey: { name: "uploadedBy", field: "uploaded_by" },
+});
+User.hasMany(Media, {
+  foreignKey: { name: "uploadedBy", field: "uploaded_by" },
+  as: "uploads",
+});
 
-Checkpoint.belongsTo(Hunt, { foreignKey: "hunt_id" });
-Badge.belongsTo(Checkpoint, { foreignKey: "checkpoint_id" });
+// Kiosk sessions
+KioskSession.belongsTo(Hunt, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+});
+Hunt.hasMany(KioskSession, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  as: "kioskSessions",
+});
 
-Checkpoint.hasOne(Badge, { foreignKey: "checkpointId" });
-Badge.belongsTo(Checkpoint, { foreignKey: "checkpointId" });
+// Hunt admins
+HuntAdmin.belongsTo(Hunt, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+});
+Hunt.hasMany(HuntAdmin, {
+  foreignKey: { name: "huntId", field: "hunt_id" },
+  as: "admins",
+});
 
-// Sync only when running directly (optional)
-// sequelize.sync({ alter: true })
-//   .then(() => console.log("✅ Tables synced"))
-//   .catch((err) => console.error("❌ Sync error:", err));
+HuntAdmin.belongsTo(User, {
+  foreignKey: { name: "userId", field: "user_id" },
+});
+User.hasMany(HuntAdmin, {
+  foreignKey: { name: "userId", field: "user_id" },
+  as: "huntAdminOf",
+});
 
-// Export for use in seed.js and elsewhere
+HuntAdmin.belongsTo(User, {
+  as: "assigner",
+  foreignKey: { name: "assignedBy", field: "assigned_by" },
+});
+User.hasMany(HuntAdmin, {
+  as: "assignedAdmins",
+  foreignKey: { name: "assignedBy", field: "assigned_by" },
+});
+
+// Friends
+Friend.belongsTo(User, {
+  as: "requester",
+  foreignKey: { name: "requesterId", field: "requester_id" },
+});
+Friend.belongsTo(User, {
+  as: "receiver",
+  foreignKey: { name: "receiverId", field: "receiver_id" },
+});
+User.hasMany(Friend, {
+  as: "requestedFriends",
+  foreignKey: { name: "requesterId", field: "requester_id" },
+});
+User.hasMany(Friend, {
+  as: "receivedFriends",
+  foreignKey: { name: "receiverId", field: "receiver_id" },
+});
+
 module.exports = {
   sequelize,
   db: sequelize,
   User,
   Hunt,
   UserHunt,
+  Checkpoint,
+  Badge,
   CheckpointAttempt,
   HuntInvite,
   Friend,
@@ -94,6 +232,4 @@ module.exports = {
   KioskSession,
   HuntAdmin,
   AuditLog,
-  Checkpoint,
-  Badge,
 };

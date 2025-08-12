@@ -1,57 +1,44 @@
 const { DataTypes } = require("sequelize");
-const db = require("./db");
-const bcrypt = require("bcrypt");
+const sequelize = require("./db");
+const bcrypt = require("bcryptjs");
 
-const User = db.define("user", {
-  id: {
-    type: DataTypes.INTEGER,
-    autoIncrement: true,
-    primaryKey: true,
-  },
-    firstName: {
-    type: DataTypes.STRING,
-    allowNull: false,
-  },
-  lastName: {
-    type: DataTypes.STRING,
-    allowNull: false,
-  },
-  username: {
-    type: DataTypes.STRING,
-    allowNull: false,
-    unique: true,
-    validate: {
-      len: [3, 20],
+const User = sequelize.define(
+  "User",
+  {
+    id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+    firstName: { type: DataTypes.STRING, allowNull: false },
+    lastName: { type: DataTypes.STRING, allowNull: false },
+    username: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+      validate: { len: [3, 20] },
     },
-  },
-  email: {
-    type: DataTypes.STRING,
-    allowNull: true,
-    unique: true,
-    validate: {
-      isEmail: true,
+    email: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true,
+      validate: { isEmail: true },
     },
+    auth0Id: { type: DataTypes.STRING, allowNull: true, unique: true },
+    passwordHash: { type: DataTypes.STRING, allowNull: true },
+    // optional profile fields used by your UI
+    role: { type: DataTypes.STRING, allowNull: true },
+    profilePicture: { type: DataTypes.STRING, allowNull: true },
+    badgeCount: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 0 },
   },
-  auth0Id: {
-    type: DataTypes.STRING,
-    allowNull: true,
-    unique: true,
-  },
-  passwordHash: {
-    type: DataTypes.STRING,
-    allowNull: true,
-  },
-});
-
-// Instance method to check password
-User.prototype.checkPassword = function (password) {
-  if (!this.passwordHash) {
-    return false; // Auth0 users don't have passwords
+  {
+    tableName: "users",
+    timestamps: true,
+    indexes: [{ fields: ["username"] }, { fields: ["email"] }],
   }
+);
+
+User.prototype.checkPassword = function (password) {
+  if (!this.passwordHash) return false;
   return bcrypt.compareSync(password, this.passwordHash);
 };
 
-// Class method to hash password
 User.hashPassword = function (password) {
   return bcrypt.hashSync(password, 10);
 };
