@@ -1,3 +1,4 @@
+const { loginLimiter, signupLimiter, oauthLimiter } = require("../middleware/rateLimit");
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const { User } = require("../database");
@@ -37,7 +38,7 @@ const authenticateJWT = (req, res, next) => {
 };
 
 // Auth0 authentication route
-router.post("/auth0", async (req, res) => {
+router.post("/auth0", oauthLimiter, async (req, res) => {
   try {
     const { auth0Id, email, username, firstName, lastName } = req.body;
 
@@ -116,7 +117,7 @@ router.post("/auth0", async (req, res) => {
 });
 
 // Google OAuth Route - Validates Google ID Token from frontend
-router.post("/google", async (req, res) => {
+router.post("/google", oauthLimiter, async (req, res) => {
   try {
     const { id_token } = req.body;
     if (!id_token) return res.status(400).json({ error: "Missing ID token" });
@@ -158,7 +159,7 @@ router.post("/google", async (req, res) => {
 });
 
 // Signup route
-router.post("/signup", async (req, res) => {
+router.post("/signup", signupLimiter, async (req, res) => {
   try {
     // CHANGED: accept email/firstName/lastName, and keep username if provided
     let { username, password, email, firstName, lastName } = req.body; // CHANGED
@@ -229,7 +230,7 @@ router.post("/signup", async (req, res) => {
 });
 
 // Login route
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
