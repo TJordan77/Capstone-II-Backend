@@ -21,8 +21,11 @@ app.use((req, res, next) => {
     res.setHeader("Vary", "Origin");
   }
   if (req.method === "OPTIONS") {
-    res.setHeader("Access--Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, Authorization");
+    // FIXED: header name had a double dash
+    res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"); // FIXED
+    // ADDED: echo requested headers so x-requested-with (and others) are allowed
+    const reqHeaders = req.headers["access-control-request-headers"];
+    res.setHeader("Access-Control-Allow-Headers", reqHeaders || "Content-Type, X-CSRF-Token, Authorization, X-Requested-With"); // ADDED
     return res.sendStatus(204);
   }
   next();
@@ -55,6 +58,26 @@ app.use(express.json());
 
 // cookie parser middleware
 app.use(cookieParser());
+
+// ADDED: one-time schema sync endpoint (protected with a secret)
+// NOTE: this must be BEFORE app.use(csrfProtection)
+app.post("/api/admin/sync", async (req, res) => {
+  try {
+    // simple protection: require a header that matches an env secret
+    if (req.headers["x-admin-key"] !== process.env.ADMIN_SYNC_KEY) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    // No need to require each model individually — database folder already did it
+    await db.authenticate();
+    // WARNING: alter modifies tables in-place; safe for first deploy
+    await db.sync({ alter: true });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("admin/sync error:", e);
+    return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
 
 // CSRF protection: mount globally (enforced on non-GET by default)
 const { csrfProtection, sendCsrfToken, csrfErrorHandler } = require("./middleware/csrf");
