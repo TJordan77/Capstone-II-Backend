@@ -5,14 +5,26 @@ const { User } = require("../database");
 const { OAuth2Client } = require("google-auth-library");
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// ADDED: Securely verify Auth0 ID tokens server-side
-// npm i jose  (run this once in your project)
-const { createRemoteJWKSet, jwtVerify } = require("jose");
+// ADDED: jose is ESM-only; gotta load it via dynamic import in CJS
+let _jose; 
+const loadJose = async () => (_jose ??= await import("jose"));
+
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN;           
-const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE;        
-const JWKS = AUTH0_DOMAIN
-  ? createRemoteJWKSet(new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`))
-  : null;                                                 
+const AUTH0_AUDIENCE = process.env_AUTH0_AUDIENCE || process.env.AUTH0_AUDIENCE;   // ADDED: tolerate either var name just in case
+
+// ADDED: lazy JWKS cache (works well on Vercel function warm invocations)
+let JWKS = null;
+const getJWKS = async () => { 
+  if (!AUTH0_DOMAIN) return null;
+  if (!JWKS) {
+    const { createRemoteJWKSet } = await loadJose();
+    JWKS = createRemoteJWKSet(
+      new URL(`https://${AUTH0_DOMAIN}/.well-known/jwks.json`)
+    );
+  }
+  return JWKS;
+};     
+
 
 const router = express.Router();
 
@@ -50,25 +62,30 @@ const authenticateJWT = (req, res, next) => {
 // ADDED: Now verifies the Auth0 ID token via JWKS instead of trusting client-provided IDs/emails
 router.post("/auth0", oauthLimiter, async (req, res) => {
   try {
-    const { id_token } = req.body; // ADDED
+    const { id_token } = req.body;
     if (!id_token) {
-      return res.status(400).send({ error: "Missing id_token" }); // ADDED
+      return res.status(400).send({ error: "Missing id_token" });
     }
-    if (!JWKS) {
-      return res.status(500).send({ error: "AUTH0_DOMAIN not configured" }); // ADDED
+    if (!AUTH0_DOMAIN) {
+      return res.status(500).send({ error: "AUTH0_DOMAIN not configured" });
+    }
+    if (!AUTH0_AUDIENCE) {
+      return res.status(500).send({ error: "AUTH0_AUDIENCE not configured" });
     }
 
-    // ADDED: Verify the Auth0 ID token
-    const { payload } = await jwtVerify(id_token, JWKS, {
+    // ADDED: Verify the Auth0 ID token via dynamic import + lazy JWKS
+    const { jwtVerify } = await loadJose();            
+    const jwks = await getJWKS();                         
+    const { payload } = await jwtVerify(id_token, jwks, {
       issuer: `https://${AUTH0_DOMAIN}/`,
-      audience: AUTH0_AUDIENCE,
-    });
+      audience: AUTH0_AUDIENCE, // For ID tokens, this should be your SPA Client ID
+    });                                             
 
     // ADDED: Extract trusted user info from verified token
     const auth0Id = payload.sub; // "auth0|xxxx"
     const email = payload.email || null;
     const firstName = payload.given_name || "Player";
-    const lastName = payload.family_name || "One";
+    const lastName  = payload.family_name || "One";
     let username = email ? email.split("@")[0] : `user_${Date.now()}`;
 
     // Try to find existing user by auth0Id first
@@ -119,7 +136,7 @@ router.post("/auth0", oauthLimiter, async (req, res) => {
         lastName: user.lastName,
       },
       JWT_SECRET,
-      { expiresIn: "24h" } // keeping your 24h window
+      { expiresIn: "24h" } // keeping a 24h window
     );
 
     res.cookie("token", token, cookieSettings);
@@ -137,7 +154,7 @@ router.post("/auth0", oauthLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error("Auth0 authentication error:", error);
-    return res.status(401).json({ error: "Invalid Auth0 token" }); // ADDED: clearer status for verification failure
+    return res.status(401).json({ error: "Invalid Auth0 token" }); // clearer status for verification failure
   }
 });
 
@@ -165,7 +182,7 @@ router.post("/google", oauthLimiter, async (req, res) => {
         username: name || email.split("@")[0],
         passwordHash: null,
         auth0Id: googleId, // reuse this field to store the Google ID
-        // NOTE: ADDED comment — consider a dedicated column later (e.g., googleId) to avoid provider collisions
+        // NOTE: may consider a dedicated column later (e.x., googleId) to avoid provider collisions
       });
     }
 
@@ -188,10 +205,10 @@ router.post("/google", oauthLimiter, async (req, res) => {
 router.post("/signup", signupLimiter, async (req, res) => {
   try {
     // CHANGED: accept email/firstName/lastName, and keep username if provided
-    let { username, password, email, firstName, lastName } = req.body; // CHANGED
+    let { username, password, email, firstName, lastName } = req.body; 
 
     // CHANGED: allow username to be derived from email if missing
-    if (!username && email) username = email.split("@")[0]; // CHANGED
+    if (!username && email) username = email.split("@")[0]; 
 
     if (!username || !password) {
       return res
@@ -207,16 +224,16 @@ router.post("/signup", signupLimiter, async (req, res) => {
 
     // CHANGED: check for existing user by username or email (if email provided)
     const where = email ? { username } : { username }; // minimal: keep username required
-    const existingUser = await User.findOne({ where: { username } }); // CHANGED (explicit)
+    const existingUser = await User.findOne({ where: { username } }); 
     if (existingUser) {
       return res.status(409).send({ error: "Username already exists" });
     }
 
     // ADDED: prevent duplicate email if provided
     if (email) {
-      const existingByEmail = await User.findOne({ where: { email } }); // ADDED
+      const existingByEmail = await User.findOne({ where: { email } }); 
       if (existingByEmail) {
-        return res.status(409).send({ error: "Email already in use" }); // ADDED
+        return res.status(409).send({ error: "Email already in use" }); 
       }
     }
 
@@ -226,21 +243,21 @@ router.post("/signup", signupLimiter, async (req, res) => {
     const user = await User.create({
       username,
       email: email || null,
-      firstName, // CHANGED
-      lastName,  // CHANGED
+      firstName, 
+      lastName,  
       passwordHash,
     });
     
     // Generate JWT token
-    // CHANGED: fix token fields (firstName/lastName casing)  <-- FIXED comment slash
+    // CHANGED: fix token fields (firstName/lastName casing)  
     const token = jwt.sign(
       {
         id: user.id,
         username: user.username,
         auth0Id: user.auth0Id,
         email: user.email,
-        firstName: user.firstName, // CHANGED
-        lastName: user.lastName,   // CHANGED
+        firstName: user.firstName, 
+        lastName: user.lastName,   
       },
       JWT_SECRET,
       { expiresIn: "24h" }
@@ -253,9 +270,9 @@ router.post("/signup", signupLimiter, async (req, res) => {
       user: {
         id: user.id,
         username: user.username,
-        firstName: user.firstName, // CHANGED
-        lastName: user.lastName,   // CHANGED
-        email: user.email,         // ADDED
+        firstName: user.firstName,
+        lastName: user.lastName,  
+        email: user.email, 
       },
     });
   } catch (error) {
@@ -267,21 +284,21 @@ router.post("/signup", signupLimiter, async (req, res) => {
 // Login route
 router.post("/login", loginLimiter, async (req, res) => {
   try {
-    // ADDED: allow either email OR username via "identifier", while keeping your existing "email" support
-    const { identifier, email, password } = req.body; // ADDED
-    const key = identifier || email;                   // ADDED
+    // ADDED: allow either email OR username via "identifier", while keeping the existing "email" support
+    const { identifier, email, password } = req.body; 
+    const key = identifier || email;                  
 
     if (!key || !password) {
-      res.status(400).send({ error: "Email/username and password are required" }); // ADDED
+      res.status(400).send({ error: "Email/username and password are required" });
       return;
     }
 
-    // Find user  <-- FIXED comment (was "/// Find user")
-    const where = key.includes("@") ? { email: key } : { username: key }; // ADDED
+    // Find user 
+    const where = key.includes("@") ? { email: key } : { username: key };
     const user = await User.findOne({ where });
     // CHANGED: guard against null before calling checkPassword
     if (!user) {
-      return res.status(401).send({ error: "Invalid credentials" }); // CHANGED
+      return res.status(401).send({ error: "Invalid credentials" });
     } 
 
     // Check password
@@ -323,7 +340,7 @@ router.post("/logout", (req, res) => {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-  }); // ADDED
+  });
   res.send({ message: "Logout successful" });
 });
 
@@ -344,14 +361,14 @@ router.get("/me", (req, res) => {
     try {
       const dbUser = await User.findByPk(user.id, {
         attributes: ["id", "email", "username", "firstName", "lastName", "auth0Id"],
-      }); // ADDED
-      if (!dbUser) return res.send({}); // ADDED
+      }); 
+      if (!dbUser) return res.send({}); 
 
       // ADDED: return normalized user object
-      res.send({ user: dbUser }); // ADDED
+      res.send({ user: dbUser }); 
     } catch (e) {
-      console.error("ME lookup error:", e); // ADDED
-      res.status(500).send({ error: "Server error" }); // ADDED
+      console.error("ME lookup error:", e); 
+      res.status(500).send({ error: "Server error" });
     }
   });
 });
