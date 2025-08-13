@@ -2,22 +2,30 @@
 // Helps protect cookie-based auth (and mitigate CSRF) by only accepting requests from trusted URLs.
 const cors = require("cors");
 
-const allowedOrigins = [
-  process.env.FRONTEND_URL,                      // our vercel link
-  process.env.FRONTEND_URL_LOCAL || "http://localhost:3000",
-  // We can add any preview domains to allow here later:
-  // "https://capstone-frontend-git-branch-user.vercel.app",
+// Allow both local dev and deployed frontend
+const ALLOWLIST = [
+  "http://localhost:3000",
+  process.env.FRONTEND_URL, 
 ].filter(Boolean);
 
-const corsOptions = {
+// Also allow Vercel preview URLs- enable later
+// const VERCEL_PREVIEW_RE = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
+const options = {
   origin(origin, cb) {
-    // Allow server-to-server / curl (no origin), and allowed origins
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error(`CORS blocked for origin: ${origin}`));
+    // No Origin header (e.g., same-origin, curl) -> allow
+    if (!origin) return cb(null, true);
+
+    const allowed =
+      ALLOWLIST.includes(origin) || VERCEL_PREVIEW_RE.test(origin);
+
+    return cb(allowed ? null : new Error(`CORS blocked: ${origin}`), allowed);
   },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true, // REQUIRED for cookies
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "X-CSRF-Token", "Authorization"],
+  optionsSuccessStatus: 204,
+  maxAge: 86400,
 };
 
-module.exports = cors(corsOptions);
+module.exports = cors(options);
