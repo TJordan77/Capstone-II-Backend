@@ -9,7 +9,7 @@ const ALLOWLIST = [
 ].filter(Boolean);
 
 // Also allow Vercel preview URLs- enable later
-// const VERCEL_PREVIEW_RE = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+const VERCEL_PREVIEW_RE = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 
 const options = {
   origin(origin, cb) {
@@ -23,7 +23,6 @@ const options = {
   },
   credentials: true, // REQUIRED for cookies
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "X-CSRF-Token", "Authorization"],
   optionsSuccessStatus: 204,
   maxAge: 86400,
 };
