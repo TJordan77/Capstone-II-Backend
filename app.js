@@ -6,6 +6,28 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const app = express();
 
+// ADDED: exact-origin CORS shim to avoid '*' with credentials
+const allowlist = new Set([
+  "http://localhost:3000",
+  process.env.FRONTEND_URL, // e.g. https://capstone-ii-frontend.vercel.app or your current preview URL
+].filter(Boolean));
+const vercelPreviewRe = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (allowlist.has(origin) || vercelPreviewRe.test(origin))) {
+    res.setHeader("Access-Control-Allow-Origin", origin);     // overwrite any '*'
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, Authorization");
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 app.set('trust proxy', 1); // so "secure" cookies behave behind Vercel's proxy
 
 const apiRouter = require("./api");
