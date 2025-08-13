@@ -22,7 +22,7 @@ app.use((req, res, next) => {
   }
   if (req.method === "OPTIONS") {
     res.setHeader("Access--Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, Authorization, X-Requested-With");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, Authorization");
     return res.sendStatus(204);
   }
   next();
