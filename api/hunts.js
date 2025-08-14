@@ -59,4 +59,18 @@ router.post("/", /* requireAuth, */ async (req, res) => {
   }
 });
 
+// get one hunt with checkpoints
+router.get("/:id", async (req, res) => {
+  try {
+    const hunt = await Hunt.findByPk(req.params.id, {
+      include: [{ model: Checkpoint, as: "checkpoints", order: [["order","ASC"]] }],
+    });
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+    return res.json(hunt);
+  } catch (e) {
+    console.error("GET /api/hunts/:id failed:", e);
+    return res.status(500).json({ error: "Failed to load hunt" });
+  }
+});
+
 module.exports = router;
