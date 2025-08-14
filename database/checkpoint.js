@@ -6,22 +6,21 @@ const Checkpoint = sequelize.define(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     huntId: { type: DataTypes.INTEGER, allowNull: false, field: "hunt_id" },
-    orderIndex: { type: DataTypes.INTEGER, allowNull: false, field: "order_index" },
-    title: { type: DataTypes.STRING, allowNull: false },
-    riddle: { type: DataTypes.TEXT, allowNull: false },
-    answer: { type: DataTypes.STRING, allowNull: false },     // hash later
-    maxAttempts: { type: DataTypes.INTEGER, allowNull: true, field: "max_attempts", validate: { min: 1 } },
-    tolerance: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 25 }, // meters
+    order: { type: DataTypes.INTEGER, allowNull: false, field: "order" },
+    title: { type: DataTypes.STRING, allowNull: false, validate: { len: [1, 200] } },
+    riddle: { type: DataTypes.TEXT, allowNull: false, validate: { len: [1, 5000] } },
+    answer: { type: DataTypes.STRING, allowNull: false },
+    tolerance: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 25, validate: { min: 0.1 } },
     hint: { type: DataTypes.STRING, allowNull: true },
-    lat: { type: DataTypes.FLOAT, allowNull: false },
-    lng: { type: DataTypes.FLOAT, allowNull: false },
+    lat: { type: DataTypes.FLOAT, allowNull: false, validate: { min: -90, max: 90 } },
+    lng: { type: DataTypes.FLOAT, allowNull: false, validate: { min: -180, max: 180 } },
   },
   {
     tableName: "checkpoints",
     timestamps: true,
     indexes: [
       { fields: ["hunt_id"] },
-      { unique: true, fields: ["hunt_id", "orderIndex"] },
+      { timestamps: true, fields: ["hunt_id", "order"] },
     ],
   }
 );
