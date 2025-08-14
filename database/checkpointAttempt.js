@@ -22,6 +22,8 @@ const CheckpointAttempt = sequelize.define(
     riddleAnswer: { type: DataTypes.TEXT, field: "riddle_answer" },
     wasCorrect: { type: DataTypes.BOOLEAN, field: "was_correct" },
     badgeEarned: { type: DataTypes.BOOLEAN, defaultValue: false, field: "badge_earned" },
+    attemptLat: { type: DataTypes.FLOAT, allowNull: true, field: "attempt_lat" },
+    attemptLng: { type: DataTypes.FLOAT, allowNull: true, field: "attempt_lng" },
 
     // ADDED: store the player's GPS location at attempt time
     attemptLat: {
