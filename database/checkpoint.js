@@ -7,7 +7,11 @@ const Checkpoint = sequelize.define(
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     huntId: { type: DataTypes.INTEGER, allowNull: false, field: "hunt_id" },
     order: { type: DataTypes.INTEGER, allowNull: false },
+    title: { type: DataTypes.STRING, allowNull: false },
     riddle: { type: DataTypes.TEXT, allowNull: false },
+    answer: { type: DataTypes.STRING, allowNull: false },     // hash later
+    maxAttempts: { type: DataTypes.INTEGER, allowNull: true, field: "max_attempts", validate: { min: 1 } },
+    tolerance: { type: DataTypes.FLOAT, allowNull: false, defaultValue: 25 }, // meters
     hint: { type: DataTypes.STRING, allowNull: true },
     lat: { type: DataTypes.FLOAT, allowNull: false },
     lng: { type: DataTypes.FLOAT, allowNull: false },

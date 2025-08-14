@@ -22,12 +22,25 @@ const CheckpointAttempt = sequelize.define(
     riddleAnswer: { type: DataTypes.TEXT, field: "riddle_answer" },
     wasCorrect: { type: DataTypes.BOOLEAN, field: "was_correct" },
     badgeEarned: { type: DataTypes.BOOLEAN, defaultValue: false, field: "badge_earned" },
+
+    // ADDED: store the player's GPS location at attempt time
+    attemptLat: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      field: "attempt_lat",
+      validate: { min: -90, max: 90 },
+    },
+    attemptLng: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      field: "attempt_lng",
+      validate: { min: -180, max: 180 },
+    },
   },
   {
     tableName: "checkpoint_attempts",
-    timestamps: false,
+    timestamps: true,
     indexes: [
-      { unique: true, fields: ["user_hunt_id", "checkpoint_id"] },
       { fields: ["checkpoint_id"] },
       { fields: ["user_hunt_id"] },
     ],
