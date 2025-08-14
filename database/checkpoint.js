@@ -21,7 +21,7 @@ const Checkpoint = sequelize.define(
     timestamps: true,
     indexes: [
       { fields: ["hunt_id"] },
-      { unique: true, fields: ["hunt_id", "order"] },
+      { unique: true, fields: ["hunt_id", "orderIndex"] },
     ],
   }
 );
