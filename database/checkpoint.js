@@ -6,7 +6,7 @@ const Checkpoint = sequelize.define(
   {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     huntId: { type: DataTypes.INTEGER, allowNull: false, field: "hunt_id" },
-    order: { type: DataTypes.INTEGER, allowNull: false },
+    orderIndex: { type: DataTypes.INTEGER, allowNull: false, field: "order_index" },
     title: { type: DataTypes.STRING, allowNull: false },
     riddle: { type: DataTypes.TEXT, allowNull: false },
     answer: { type: DataTypes.STRING, allowNull: false },     // hash later
