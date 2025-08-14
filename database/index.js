@@ -17,6 +17,7 @@ const Media = require("./media");
 const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
+const UserCheckpointProgress = require("./userCheckpointProgress");
 
 // Hunt.creator -> User
 Hunt.belongsTo(User, {
@@ -108,6 +109,26 @@ CheckpointAttempt.belongsTo(Checkpoint, {
 Checkpoint.hasMany(CheckpointAttempt, {
   foreignKey: { name: "checkpointId", field: "checkpoint_id" },
   as: "attempts",
+});
+
+// Attempt limits / Counters
+// one row per (userHunt, checkpoint) with attemptsCount & solvedAt
+UserCheckpointProgress.belongsTo(UserHunt, {
+  foreignKey: { name: "userHuntId", field: "user_hunt_id" },
+  onDelete: "CASCADE",
+});
+UserHunt.hasMany(UserCheckpointProgress, {
+  foreignKey: { name: "userHuntId", field: "user_hunt_id" },
+  as: "checkpointProgress",
+});
+
+UserCheckpointProgress.belongsTo(Checkpoint, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  onDelete: "CASCADE",
+});
+Checkpoint.hasMany(UserCheckpointProgress, {
+  foreignKey: { name: "checkpointId", field: "checkpoint_id" },
+  as: "progress",
 });
 
 // Leaderboard entries (per hunt/user)
@@ -232,4 +253,5 @@ module.exports = {
   KioskSession,
   HuntAdmin,
   AuditLog,
+  UserCheckpointProgress,
 };
