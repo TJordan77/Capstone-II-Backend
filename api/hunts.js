@@ -40,7 +40,7 @@ router.post("/", /* requireAuth, */ async (req, res) => {
     // Bulk create checkpoints
     const rows = checkpoints.map((cp, i) => ({
       huntId: hunt.id,
-      orderIndex: cp.order ?? i + 1,
+      order: cp.order ?? i + 1,
       title: cp.title,
       riddle: cp.riddle,
       answer: cp.answer,             // field we’re adding below
