@@ -4,7 +4,7 @@ const router = express.Router();
 const { sequelize, Checkpoint, CheckpointAttempt, UserCheckpointProgress } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware"); // adjust path/name if different
 
-router.post("/play/checkpoints/:checkpointId/attempt", requireAuth, async (req, res) => {
+router.post("/checkpoints/:checkpointId/attempt", requireAuth, async (req, res) => {
   const { checkpointId } = req.params;
   const { userHuntId, answer, lat, lng } = req.body;
 
@@ -50,14 +50,14 @@ router.post("/play/checkpoints/:checkpointId/attempt", requireAuth, async (req, 
       attemptLng: lng, 
     }, { transaction: t });
 
-    // Increment counter atomically, set solvedAt if first correct
-    await progress.update(
-      {
-        attemptsCount: progress.attemptsCount + 1,
-        solvedAt: wasCorrect && !progress.solvedAt ? new Date() : progress.solvedAt,
-      },
-      { transaction: t }
-    );
+   const newSolvedAt = wasCorrect && !progress.solvedAt ? new Date() : progress.solvedAt;
+   // Set solvedAt if applicable
+   if (newSolvedAt !== progress.solvedAt) {
+     await progress.update({ solvedAt: newSolvedAt }, { transaction: t });
+   }
+   // Atomic increment
+   await progress.increment("attemptsCount", { by: 1, transaction: t });
+   await progress.reload({ transaction: t, lock: t.LOCK.UPDATE }); // ensure we read the incremented value
 
     await t.commit();
     return res.status(200).json({
