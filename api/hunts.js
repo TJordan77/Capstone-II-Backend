@@ -59,24 +59,17 @@ router.post("/", /* requireAuth, */ async (req, res) => {
   }
 });
 
-// GET /api/hunts/:id  -> hunt + checkpoints (sorted)
-router.get('/:id', async (req, res, next) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid hunt id' });
-
+// get one hunt with checkpoints
+router.get("/:id", async (req, res) => {
   try {
-    const hunt = await Hunt.findByPk(id, {
-      include: [{ model: Checkpoint, as: 'checkpoints' }],
-      // sort the included checkpoints
-      order: [[{ model: Checkpoint, as: 'checkpoints' }, 'order', 'ASC']], // or 'sortOrder'
-      // attributes: { exclude: ['secretKey'] }, // optional
+    const hunt = await Hunt.findByPk(req.params.id, {
+      include: [{ model: Checkpoint, as: "checkpoints", order: [["order","ASC"]] }],
     });
-
-    if (!hunt) return res.status(404).json({ error: 'Hunt not found' });
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
     return res.json(hunt);
   } catch (e) {
-    console.error('GET /api/hunts/:id failed:', e);
-    return res.status(500).json({ error: 'Failed to load hunt' });
+    console.error("GET /api/hunts/:id failed:", e);
+    return res.status(500).json({ error: "Failed to load hunt" });
   }
 });
 
