@@ -1,95 +1,84 @@
-const express = require("express");
-const router = express.Router();
-const { sequelize, Hunt, Checkpoint } = require("../database");
-// Just incase we want the hunt routes to require auth later: 
-// const { requireAuth } = require("../middleware/authMiddleware");
+import React, { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { api, initCsrf } from '../ApiClient';
 
-router.post("/", /* requireAuth, */ async (req, res) => {
-  const body = req.body || {};
-  const {
-    title, name, description, endsAt, maxPlayers, visibility, coverUrl,
-    checkpoints = [],
-  } = body;
+export default function HuntPage() {
+  const { id } = useParams();
+  const [hunt, setHunt] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
 
-  if (!title && !name) return res.status(400).json({ error: "title is required" });
-  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
-    return res.status(400).json({ error: "At least one checkpoint is required" });
+  useEffect(() => {
+    let alive = true;
+    const controller = new AbortController();
+
+    (async () => {
+      setLoading(true);
+      setErr('');
+      try {
+        await initCsrf();
+        // baseURL already includes /api
+        const res = await api.get(`/hunts/${id}`, { signal: controller.signal });
+        if (!alive) return;
+        setHunt(res.data);
+      } catch (e) {
+        if (!alive) return;
+        // If request was aborted, do nothing
+        if (e.name === 'CanceledError' || e.name === 'AbortError') return;
+
+        const msg =
+          e?.response?.data?.error ||
+          (e?.response?.status ? `Error ${e.response.status}` : 'Failed to load hunt');
+        setErr(msg);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [id]);
+
+  if (loading) return <div className="page">Loading hunt…</div>;
+
+  if (err) {
+    return (
+      <div className="page" style={{ textAlign: 'center', marginTop: 32 }}>
+        <p>{err}</p>
+        <Link to="/">Back home</Link>
+      </div>
+    );
   }
 
-  // Minimal validation of checkpoints
-  for (const cp of checkpoints) {
-    if (!cp.title || !cp.riddle || !cp.answer) {
-      return res.status(400).json({ error: "Each checkpoint needs title, riddle, answer" });
-    }
-  }
+  if (!hunt) return <div className="page">Not found</div>;
 
-  const t = await sequelize.transaction();
-  try {
-    const hunt = await Hunt.create(
-      {
-        title: title || name, // accept either key from client
-        description: description || "",
-        endsAt: endsAt || null,
-        maxPlayers: maxPlayers || null,
-        visibility: visibility || "public",
-        coverUrl: coverUrl || null,
-      },
-      { transaction: t }
-    );  
+  const checkpoints = (hunt.checkpoints || [])
+    .slice()
+    .sort((a, b) => (a.order ?? a.sortOrder ?? 0) - (b.order ?? b.sortOrder ?? 0));
 
-    // Bulk create checkpoints
-    const rows = checkpoints.map((cp, i) => ({
-      huntId: hunt.id,
-      order: cp.order ?? i + 1,
-      title: cp.title,
-      riddle: cp.riddle,
-      answer: cp.answer,             // field we’re adding below
-      tolerance: cp.tolerance ?? 25, // meters; field we’re adding below
-      lat: cp.lat,
-      lng: cp.lng,
-    }));
-    await Checkpoint.bulkCreate(rows, { transaction: t });
+  return (
+    <div className="page">
+      <h1>{hunt.title}</h1>
+      {hunt.description && <p>{hunt.description}</p>}
 
-    await t.commit();
-    return res.status(201).json({ id: hunt.id });
-  } catch (err) {
-    await t.rollback();
-    console.error("POST /api/hunts failed:", err);
-    return res.status(500).json({ error: "Failed to create hunt" });
-  }
-});
+      <h3>Checkpoints ({checkpoints.length})</h3>
+      <ol>
+        {checkpoints.map((cp) => (
+          <li key={cp.id}>
+            <strong>{cp.title}</strong>
+            {cp.riddle && <div>{cp.riddle}</div>}
+            <small>
+              lat {cp.lat}, lng {cp.lng}, tol {cp.tolerance}m
+            </small>
+          </li>
+        ))}
+      </ol>
 
-// get one hunt with checkpoints
-router.get("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "Invalid id" });
-  }
-
-  try {
-    const hunt = await Hunt.findByPk(id, {
-      include: [
-        {
-          model: Checkpoint,
-          as: "checkpoints", 
-        },
-      ],
-      
-      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
-    });
-
-    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
-    return res.json(hunt);
-  } catch (e) {
-    console.error("GET /api/hunts/:id failed:", {
-      name: e.name,
-      message: e.message,
-      stack: e.stack,
-      db: e.original?.message || e.parent?.message,
-      detail: e.original?.detail || e.parent?.detail,
-    });
-    return res.status(500).json({ error: "Failed to load hunt" });
-  }
-});
-
-module.exports = router;
+      <Link to="…/play">Start hunt</Link>{' '}
+      <span style={{ opacity: 0.5 }}>·</span>{' '}
+      <Link to="/">← Back</Link>
+    </div>
+  );
+}
