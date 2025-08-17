@@ -1,4 +1,3 @@
-// database/seed.js
 const {
   sequelize,
   User,
@@ -13,7 +12,10 @@ const {
   HuntFeedback,
   HuntAdmin,
   LeaderboardEntry,
+  UserBadge,
 } = require("./index");
+
+const { Op } = require("sequelize"); // used once for IN query (safe to keep)
 
 // === helpers ===
 function generateAccessCode(len = 6) {
@@ -165,10 +167,11 @@ async function seed() {
       tolerance: 35,
     });
 
+    // === BADGES for the tutorial checkpoints (uses your Badge model fields) ===
     await Badge.bulkCreate([
-      { checkpointId: tut1.id, title: "Trailhead", description: "Started your first SideQuest.", image: "/badges/trailhead.png" },
-      { checkpointId: tut2.id, title: "Pathfinder", description: "You found the green spot.", image: "/badges/pathfinder.png" },
-      { checkpointId: tut3.id, title: "Finisher", description: "You completed the tutorial!", image: "/badges/finisher.png" },
+      { checkpointId: tut1.id, title: "Trailhead",  description: "Started your first SideQuest.", image: "/badges/trailhead.png" },
+      { checkpointId: tut2.id, title: "Pathfinder", description: "You found the green spot.",     image: "/badges/pathfinder.png" },
+      { checkpointId: tut3.id, title: "Finisher",   description: "You completed the tutorial!",   image: "/badges/finisher.png" },
     ]);
 
     // --- Second public hunt (fixed coords) ---
@@ -202,10 +205,11 @@ async function seed() {
       lat: baseLat + 0.0007, lng: baseLng - 0.0001, tolerance: 30,
     });
 
+    // === BADGES for the City Secrets checkpoints ===
     await Badge.bulkCreate([
-      { checkpointId: cs1.id, title: "Timekeeper", description: "Found the clock.", image: "/badges/clock.png" },
-      { checkpointId: cs2.id, title: "Sanctuary", description: "Found the church.", image: "/badges/church.png" },
-      { checkpointId: cs3.id, title: "Merchant", description: "Found the market.", image: "/badges/market.png" },
+      { checkpointId: cs1.id, title: "Timekeeper", description: "Found the clock.",  image: "/badges/clock.png" },
+      { checkpointId: cs2.id, title: "Sanctuary",  description: "Found the church.", image: "/badges/church.png" },
+      { checkpointId: cs3.id, title: "Merchant",   description: "Found the market.", image: "/badges/market.png" },
     ]);
 
     // --- Private hunt (invite-only) ---
@@ -222,7 +226,7 @@ async function seed() {
     });
 
     await Checkpoint.bulkCreate([
-      { huntId: privateHunt.id, order: 1, title: "Stage Door", riddle: "Knock thrice.", answer: "knock", lat: baseLat - 0.0002, lng: baseLng + 0.0003, tolerance: 25 },
+      { huntId: privateHunt.id, order: 1, title: "Stage Door", riddle: "Knock thrice.",  answer: "knock", lat: baseLat - 0.0002, lng: baseLng + 0.0003, tolerance: 25 },
       { huntId: privateHunt.id, order: 2, title: "Green Room", riddle: "Color of calm.", answer: "green", lat: baseLat - 0.0003, lng: baseLng + 0.0005, tolerance: 25 },
     ]);
 
@@ -275,6 +279,38 @@ async function seed() {
       },
     ]);
 
+    // === NEW: Seed some earned badges so user_badges isn't empty ===
+    // Pick badges by their checkpoint relationships:
+    const tutorialBadges = await Badge.findAll({
+      where: { checkpointId: { [Op.in]: [tut1.id, tut2.id, tut3.id] } },
+    });
+    const cityBadges = await Badge.findAll({
+      where: { checkpointId: { [Op.in]: [cs1.id, cs2.id, cs3.id] } },
+    });
+
+    // Map helpers: title -> id (in case you want stable references)
+    const byTitle = (rows) => Object.fromEntries(rows.map(b => [b.title, b.id]));
+
+    const T = byTitle(tutorialBadges);
+    const C = byTitle(cityBadges);
+
+    if (UserBadge?.bulkCreate) {
+      await UserBadge.bulkCreate([
+        // player finished City Secrets → award all three
+        { userId: player.id,  badgeId: C["Timekeeper"], earnedAt: new Date(Date.now() - 57 * 60 * 1000) },
+        { userId: player.id,  badgeId: C["Sanctuary"],  earnedAt: new Date(Date.now() - 45 * 60 * 1000) },
+        { userId: player.id,  badgeId: C["Merchant"],   earnedAt: new Date(Date.now() - 30 * 60 * 1000) },
+
+        // player2 finished City Secrets later
+        { userId: player2.id, badgeId: C["Timekeeper"], earnedAt: new Date(Date.now() - 80 * 60 * 1000) },
+        { userId: player2.id, badgeId: C["Sanctuary"],  earnedAt: new Date(Date.now() - 60 * 60 * 1000) },
+        { userId: player2.id, badgeId: C["Merchant"],   earnedAt: new Date(Date.now() - 40 * 60 * 1000) },
+
+        // player3 started tutorial → earned first badge only
+        { userId: player3.id, badgeId: T["Trailhead"],  earnedAt: new Date(Date.now() - 10 * 60 * 1000) },
+      ], { ignoreDuplicates: true }); // safe if rerun locally
+    }
+
     // --- Optional: prefill LeaderboardEntry if your model is present ---
     if (typeof LeaderboardEntry !== "undefined" && LeaderboardEntry?.bulkCreate) {
       await LeaderboardEntry.bulkCreate([
@@ -319,7 +355,7 @@ async function seed() {
 
     if (typeof Notification !== "undefined" && Notification?.bulkCreate) {
       await Notification.bulkCreate([
-        { userId: player.id, message: "You earned Trailhead!", type: "badge" },
+        { userId: player.id,  message: "You earned Trailhead!", type: "badge" },
         { userId: player2.id, message: "player1 invited you to a hunt.", type: "invite" },
       ]);
     }
