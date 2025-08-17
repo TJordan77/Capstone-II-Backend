@@ -5,6 +5,8 @@ const { UserHunt, HuntInvite } = require("../database");
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
 
+// POST /api/hunts
+// Create a hunt + it's checkpoints
 router.post(
   "/",
   /* requireAuth, */ async (req, res) => {
@@ -57,8 +59,8 @@ router.post(
         order: cp.order ?? i + 1,
         title: cp.title,
         riddle: cp.riddle,
-        answer: cp.answer, // field we’re adding below
-        tolerance: cp.tolerance ?? 25, // meters; field we’re adding below
+        answer: cp.answer, // double check that checkpoint model has this field
+        tolerance: cp.tolerance ?? 25, // meters;
         lat: cp.lat,
         lng: cp.lng,
       }));
@@ -74,7 +76,9 @@ router.post(
   }
 );
 
-// get one hunt with checkpoints
+
+// GET /api/hunts/:id
+// Returns a hunt with its checkpoints ordered by `order` ASC
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
@@ -89,7 +93,6 @@ router.get("/:id", async (req, res) => {
           as: "checkpoints",
         },
       ],
-
       order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
     });
 
@@ -107,12 +110,11 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// join an existing hunt by code
+// POST /api/hunts/join
+// Join a hunt by a code (invite or public access code)
 router.post("/join", async (req, res) => {
   try {
-    const code = String(req.body?.joinCode || "")
-      .trim()
-      .toUpperCase();
+    const code = String(req.body?.joinCode || "").trim().toUpperCase();
     if (!code) return res.status(400).json({ error: "joinCode is required" });
 
     let hunt = await Hunt.findOne({ where: { accessCode: code } });
@@ -132,7 +134,7 @@ router.post("/join", async (req, res) => {
     if (userId && typeof UserHunt !== "undefined") {
       const [row] = await UserHunt.findOrCreate({
         where: { userId, huntId: hunt.id },
-        defaults: { userId, huntId: hunt.id, status: "joined" },
+        defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
       });
       userHuntId = row.id;
     }
@@ -140,6 +142,46 @@ router.post("/join", async (req, res) => {
     return res.json({ huntId: hunt.id, userHuntId });
   } catch (e) {
     console.error("POST /api/hunts/join failed:", e);
+    return res.status(500).json({ error: "Failed to join hunt" });
+  }
+});
+
+// POST /api/hunts/:huntId/join
+// Direct-join by huntId (no code). Returns userHuntId (if logged in), and first checkpoint to start
+router.post("/:huntId/join", /* requireAuth, */ async (req, res) => {
+  try {
+    const huntId = Number(req.params.huntId);
+    if (!Number.isInteger(huntId) || huntId <= 0) {
+      return res.status(400).json({ error: "Invalid huntId" });
+    }
+
+    // Pull checkpoints ordered by `order` ASC
+    const hunt = await Hunt.findByPk(huntId, {
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
+    });
+
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    // Create or find the user's participation row (if authenticated)
+    let userHuntId = null;
+    const userId = req.user?.id || req.user?.userId;
+    if (userId && typeof UserHunt !== "undefined") {
+      const [row] = await UserHunt.findOrCreate({
+        where: { userId, huntId },
+        defaults: { userId, huntId, status: "joined", startedAt: new Date() },
+      });
+      userHuntId = row.id;
+    }
+
+    const firstCheckpoint = hunt.checkpoints?.[0] || null;
+
+    return res.json({
+      userHuntId,
+      firstCheckpointId: firstCheckpoint?.id || null,
+    });
+  } catch (e) {
+    console.error("POST /api/hunts/:huntId/join failed:", e);
     return res.status(500).json({ error: "Failed to join hunt" });
   }
 });
