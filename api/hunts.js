@@ -5,76 +5,93 @@ const { UserHunt, HuntInvite } = require("../database");
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
 
+function generateAccessCode(len = 6) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return out;
+}
+
 // POST /api/hunts
 // Create a hunt + it's checkpoints
-router.post(
-  "/",
-  /* requireAuth, */ async (req, res) => {
-    const body = req.body || {};
-    const {
-      title,
-      name,
-      description,
-      endsAt,
-      maxPlayers,
-      visibility,
-      coverUrl,
-      checkpoints = [],
-    } = body;
+router.post("/", /* requireAuth, */ async (req, res) => {
+  const body = req.body || {};
+  const {
+    title,
+    name,
+    description,
+    creatorId,
 
-    if (!title && !name)
-      return res.status(400).json({ error: "title is required" });
-    if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "At least one checkpoint is required" });
-    }
+    endsAt,
+    maxPlayers,
+    visibility,
+    coverUrl,
 
-    // Minimal validation of checkpoints
-    for (const cp of checkpoints) {
-      if (!cp.title || !cp.riddle || !cp.answer) {
-        return res
-          .status(400)
-          .json({ error: "Each checkpoint needs title, riddle, answer" });
-      }
-    }
+    accessCode,      // optional: client can provide, otherwise auto-generated
+    checkpoints = [],
+  } = body;
 
-    const t = await sequelize.transaction();
-    try {
-      const hunt = await Hunt.create(
-        {
-          title: title || name, // accept either key from client
-          description: description || "",
-          endsAt: endsAt || null,
-          maxPlayers: maxPlayers || null,
-          visibility: visibility || "public",
-          coverUrl: coverUrl || null,
-        },
-        { transaction: t }
-      );
-
-      // Bulk create checkpoints
-      const rows = checkpoints.map((cp, i) => ({
-        huntId: hunt.id,
-        order: cp.order ?? i + 1,
-        title: cp.title,
-        riddle: cp.riddle,
-        answer: cp.answer, // double check that checkpoint model has this field
-        tolerance: cp.tolerance ?? 25, // meters;
-        lat: cp.lat,
-        lng: cp.lng,
-      }));
-      await Checkpoint.bulkCreate(rows, { transaction: t });
-
-      await t.commit();
-      return res.status(201).json({ id: hunt.id });
-    } catch (err) {
-      await t.rollback();
-      console.error("POST /api/hunts failed:", err);
-      return res.status(500).json({ error: "Failed to create hunt" });
+  if (!title && !name) {
+    return res.status(400).json({ error: "title is required" });
+  }
+  if (!Array.isArray(checkpoints) || checkpoints.length === 0) {
+    return res.status(400).json({ error: "At least one checkpoint is required" });
+  }
+  for (const cp of checkpoints) {
+    if (!cp.title || !cp.riddle || !cp.answer || cp.lat == null || cp.lng == null) {
+      return res.status(400).json({
+        error: "Each checkpoint needs title, riddle, answer, lat, lng",
+      });
     }
   }
-);
+
+  const t = await sequelize.transaction();
+  try {
+    const hunt = await Hunt.create(
+      {
+        title: title || name,
+        description: description || "",
+        creatorId: creatorId ?? null,
+
+        endsAt: endsAt ?? null,
+        maxPlayers: maxPlayers ?? null,
+        visibility: visibility ?? "public",
+        coverUrl: coverUrl ?? null,
+
+        isPublished: false,
+        isActive: true,
+        version: 1,
+
+        // Generate if not provided
+        accessCode: accessCode || generateAccessCode(),
+      },
+      { transaction: t }
+    );
+
+    const rows = checkpoints.map((cp, i) => ({
+      huntId: hunt.id,
+      order: cp.order ?? i + 1,
+      title: cp.title,
+      riddle: cp.riddle,
+      answer: cp.answer,
+      tolerance: cp.tolerance ?? 25,
+      lat: cp.lat,
+      lng: cp.lng,
+      hint: cp.hint ?? null,
+    }));
+    await Checkpoint.bulkCreate(rows, { transaction: t });
+
+    await t.commit();
+    return res.status(201).json({ id: hunt.id, accessCode: hunt.accessCode });
+  } catch (err) {
+    await t.rollback();
+    console.error("POST /api/hunts failed:", err);
+    if (err?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({ error: "Access code already exists. Try again." });
+    }
+    return res.status(500).json({ error: "Failed to create hunt" });
+  }
+});
 
 
 // GET /api/hunts/:id

@@ -16,6 +16,17 @@ const Hunt = sequelize.define(
     title: { type: DataTypes.STRING, allowNull: false },
     description: { type: DataTypes.TEXT },
 
+    // New fields added to match the UI
+    endsAt: { type: DataTypes.DATE, allowNull: true, field: "ends_at" },
+    maxPlayers: { type: DataTypes.INTEGER, allowNull: true, field: "max_players", validate: { min: 1 } },
+    visibility: {
+      type: DataTypes.ENUM("public", "private", "unlisted"),
+      allowNull: false,
+      defaultValue: "public",
+      field: "visibility",
+    },
+    coverUrl: { type: DataTypes.STRING, allowNull: true, field: "cover_url", validate: { len: [0, 1024] } },
+
     isPublished: { type: DataTypes.BOOLEAN, defaultValue: false, field: "is_published" },
     isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: "is_active" },
 
@@ -37,6 +48,8 @@ const Hunt = sequelize.define(
       { unique: true, fields: ["access_code"] },
       { fields: ["creator_id"] },
       { fields: ["original_hunt_id"] },
+      { fields: ["visibility"] }, 
+      { fields: ["is_active", "is_published"] }, // optional compound filter index
     ],
   }
 );
