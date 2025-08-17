@@ -16,7 +16,7 @@ const adminRouter = require("./api/admin");
 const leaderboardRouter = require("./api/leaderboard");
 const { db } = require("./database");
 // const initSocketServer = require("./socket-server");  // Prevent socket server from going on startup
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 8080;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const { sseMiddleware } = require("./sse");
 
