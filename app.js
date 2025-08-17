@@ -29,7 +29,6 @@ app.use(helmet({ contentSecurityPolicy: false })); // gonna start with relaxed C
 // See middleware/cors.js for the centralized allow-list & options
 const secureCors = require("./middleware/cors");
 app.use(secureCors); // <— replaces the open regex CORS
-app.options("*", secureCors); // <— ensure preflights return 204 consistently
 
 // Note: certain app.use middleware should be near top in this section
 // body parser middleware
