@@ -73,7 +73,8 @@ app.use(express.static(path.join(__dirname, "public"))); // serve static files f
 app.get("/api/auth/csrf", sendCsrfToken);
 
 app.use("/api", apiRouter); // mount api router
-app.use("/api", leaderboardRouter); // mount leaderboard router
+app.use("/api/leaderboard", leaderboardRouter);
+ // mount leaderboard router
 app.use("/api/auth", authRouter); // mount auth router
 app.use("/api/admin", adminRouter); // mount admin router
 
