@@ -153,7 +153,7 @@ router.post("/join", async (req, res) => {
         where: { userId, huntId: hunt.id },
         defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
       });
-      userHuntId = row.id;
+        userHuntId = row.id;
     }
 
     return res.json({ huntId: hunt.id, userHuntId });
@@ -200,6 +200,144 @@ router.post("/:huntId/join", /* requireAuth, */ async (req, res) => {
   } catch (e) {
     console.error("POST /api/hunts/:huntId/join failed:", e);
     return res.status(500).json({ error: "Failed to join hunt" });
+  }
+});
+
+/* ====== Creator Dashboard / Route Designer additions (minimal changes) ====== */
+
+// GET /api/hunts/creator/:id  -> list a creator's hunts (includes checkpoints)
+router.get("/creator/:id", /* requireAuth, */ async (req, res) => {
+  const creatorId = Number(req.params.id);
+  if (!Number.isInteger(creatorId) || creatorId <= 0) {
+    return res.status(400).json({ error: "Invalid creator id" });
+  }
+  try {
+    const hunts = await Hunt.findAll({
+      where: { creatorId },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [
+        ["createdAt", "DESC"],
+        [{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"],
+      ],
+    });
+    return res.json(hunts);
+  } catch (e) {
+    console.error("GET /api/hunts/creator/:id failed:", e);
+    return res.status(500).json({ error: "Failed to load creator hunts" });
+  }
+});
+
+// PATCH /api/hunts/:id  -> update title/description (minimal surface per spec)
+router.patch("/:id", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+  try {
+    const hunt = await Hunt.findByPk(id);
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    const { title, description } = req.body || {};
+    if (title != null) hunt.title = String(title);
+    if (description != null) hunt.description = String(description);
+
+    await hunt.save();
+    return res.json(hunt);
+  } catch (e) {
+    console.error("PATCH /api/hunts/:id failed:", e);
+    return res.status(500).json({ error: "Failed to update hunt" });
+  }
+});
+
+// DELETE /api/hunts/:id  -> delete a hunt (and its checkpoints via FK constraints)
+router.delete("/:id", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+  try {
+    const hunt = await Hunt.findByPk(id);
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    await hunt.destroy();
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/hunts/:id failed:", e);
+    return res.status(500).json({ error: "Failed to delete hunt" });
+  }
+});
+
+// PATCH /api/hunts/:id/publish  -> toggle publish status
+// Enforces: a hunt must have at least 1 checkpoint to be published
+router.patch("/:id/publish", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+  try {
+    const hunt = await Hunt.findByPk(id);
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    const count = await Checkpoint.count({ where: { huntId: id } });
+    if (count === 0) {
+      return res.status(400).json({ error: "Add at least one checkpoint before publishing" });
+    }
+
+    hunt.isPublished = !hunt.isPublished;
+    await hunt.save();
+    return res.json(hunt);
+  } catch (e) {
+    console.error("PATCH /api/hunts/:id/publish failed:", e);
+    return res.status(500).json({ error: "Failed to toggle publish status" });
+  }
+});
+
+// POST /api/hunts/:id/checkpoints  -> add a checkpoint to a hunt (drag/map-based)
+// Enforces minimal validation and unique order within the hunt
+router.post("/:id/checkpoints", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+  try {
+    const hunt = await Hunt.findByPk(id);
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    const { title, riddle, answer, hint, lat, lng, tolerance, order } = req.body || {};
+    if (!title || !riddle || !answer) {
+      return res.status(400).json({ error: "title, riddle, answer are required" });
+    }
+    if (lat == null || lng == null) {
+      return res.status(400).json({ error: "lat and lng are required" });
+    }
+
+    const maxOrder =
+      (await Checkpoint.max("order", { where: { huntId: id } })) || 0;
+    const desiredOrder =
+      Number.isFinite(Number(order)) && Number(order) > 0 ? Number(order) : maxOrder + 1;
+
+    // Unique order per hunt
+    const exists = await Checkpoint.findOne({ where: { huntId: id, order: desiredOrder } });
+    if (exists) {
+      return res.status(409).json({ error: "Checkpoint order already in use" });
+    }
+
+    const cp = await Checkpoint.create({
+      huntId: id,
+      order: desiredOrder,
+      title,
+      riddle,
+      answer,
+      hint: hint ?? null,
+      lat,
+      lng,
+      tolerance: tolerance ?? 25,
+    });
+
+    return res.status(201).json(cp);
+  } catch (e) {
+    console.error("POST /api/hunts/:id/checkpoints failed:", e);
+    return res.status(500).json({ error: "Failed to add checkpoint" });
   }
 });
 
