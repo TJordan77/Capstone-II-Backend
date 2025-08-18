@@ -12,6 +12,21 @@ function generateAccessCode(len = 6) {
   return out;
 }
 
+// Pretty URL helpers for slug routing (kept minimal)
+function slugify(s = "") {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+async function ensureUniqueSlug(baseSlug) {
+  if (!baseSlug) return null;
+  let slug = baseSlug;
+  let n = 2;
+  while (await Hunt.findOne({ where: { slug } })) {
+    slug = `${baseSlug}-${n++}`;
+    if (n > 1000) break; // safety guard
+  }
+  return slug;
+}
+
 // POST /api/hunts
 // Create a hunt + it's checkpoints
 router.post("/", /* requireAuth, */ async (req, res) => {
@@ -47,6 +62,12 @@ router.post("/", /* requireAuth, */ async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
+    // Derive a unique slug if not provided and we have a title/name
+    let derivedSlug = null;
+    if (!body.slug && (title || name)) {
+      derivedSlug = await ensureUniqueSlug(slugify(title || name));
+    }
+
     const hunt = await Hunt.create(
       {
         title: title || name,
@@ -61,6 +82,9 @@ router.post("/", /* requireAuth, */ async (req, res) => {
         isPublished: false,
         isActive: true,
         version: 1,
+
+        // pretty URL slug (optional)
+        slug: body.slug || derivedSlug || null,
 
         // Generate if not provided
         accessCode: accessCode || generateAccessCode(),
@@ -123,6 +147,25 @@ router.get("/:id", async (req, res) => {
       db: e.original?.message || e.parent?.message,
       detail: e.original?.detail || e.parent?.detail,
     });
+    return res.status(500).json({ error: "Failed to load hunt" });
+  }
+});
+
+// GET /api/hunts/slug/:slug
+// Returns a hunt by slug with its checkpoints ordered by `order` ASC
+router.get("/slug/:slug", async (req, res) => {
+  const slug = String(req.params.slug || "").trim().toLowerCase();
+  if (!slug) return res.status(400).json({ error: "Invalid slug" });
+  try {
+    const hunt = await Hunt.findOne({
+      where: { slug },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
+    });
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+    return res.json(hunt);
+  } catch (e) {
+    console.error("GET /api/hunts/slug/:slug failed:", e);
     return res.status(500).json({ error: "Failed to load hunt" });
   }
 });
@@ -199,6 +242,44 @@ router.post("/:huntId/join", /* requireAuth, */ async (req, res) => {
     });
   } catch (e) {
     console.error("POST /api/hunts/:huntId/join failed:", e);
+    return res.status(500).json({ error: "Failed to join hunt" });
+  }
+});
+
+// POST /api/hunts/slug/:slug/join
+// Direct-join by slug (no code). Mirrors /:huntId/join
+router.post("/slug/:slug/join", /* requireAuth, */ async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").trim().toLowerCase();
+    if (!slug) return res.status(400).json({ error: "Invalid slug" });
+
+    const hunt = await Hunt.findOne({
+      where: { slug },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
+    });
+
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+
+    let userHuntId = null;
+    const userId = req.user?.id || req.user?.userId;
+    if (userId && typeof UserHunt !== "undefined") {
+      const [row] = await UserHunt.findOrCreate({
+        where: { userId, huntId: hunt.id },
+        defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
+      });
+      userHuntId = row.id;
+    }
+
+    const firstCheckpoint = hunt.checkpoints?.[0] || null;
+
+    return res.json({
+      userHuntId,
+      huntId: hunt.id,
+      firstCheckpointId: firstCheckpoint?.id || null,
+    });
+  } catch (e) {
+    console.error("POST /api/hunts/slug/:slug/join failed:", e);
     return res.status(500).json({ error: "Failed to join hunt" });
   }
 });
