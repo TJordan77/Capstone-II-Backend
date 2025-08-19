@@ -110,16 +110,17 @@ router.post("/checkpoints/:checkpointId/attempt", requireAuth, async (req, res) 
 
     // Record attempt
     await CheckpointAttempt.create(
-      {
-        userHuntId: uh.id,
-        checkpointId: cp.id,
-        riddle_answer: String(answer),
-        was_correct: wasCorrect,
-        attempt_lat: lat ?? null,
-        attempt_lng: lng ?? null,
-      },
-      { transaction: t }
-    );
+    {
+      userHuntId: uh.id,
+      checkpointId: cp.id,
+      riddleAnswer: String(answer),
+      wasCorrect, // JScript Object Shorthand doesn't need key and value repeated if they're the same name
+      attemptLat: lat ?? null,
+      attemptLng: lng ?? null,
+    },
+    { transaction: t }
+  );
+
 
     // Update progress counters & solved flag
     progress.attemptsCount += 1;
