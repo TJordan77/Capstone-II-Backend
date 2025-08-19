@@ -5,7 +5,7 @@ const { UserHunt, HuntInvite } = require("../database");
 const { Op } = require("sequelize"); // added for simple date filters
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
-+ const { User, Badge, UserBadge, UserCheckpointProgress } = require("../database"); // needed for profile endpoints
+const { User, Badge, UserBadge, UserCheckpointProgress } = require("../database"); // needed for profile endpoints
 
 function generateAccessCode(len = 6) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
