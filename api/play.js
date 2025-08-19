@@ -1,8 +1,16 @@
 const express = require("express");
 const router = express.Router();
 
-const { sequelize, Checkpoint, CheckpointAttempt, UserCheckpointProgress, UserHunt, Badge, UserBadge } = require("../database");
-const { requireAuth } = require("../middleware/authMiddleware"); 
+const {
+  sequelize,
+  Checkpoint,
+  CheckpointAttempt,
+  UserCheckpointProgress,
+  UserHunt,
+  Badge,
+  UserBadge,
+} = require("../database");
+const { requireAuth } = require("../middleware/authMiddleware");
 
 // A little answer normalizer
 const norm = (s) => (s || "").trim().toLowerCase();
@@ -11,7 +19,8 @@ const norm = (s) => (s || "").trim().toLowerCase();
 function metersBetween(lat1, lng1, lat2, lng2) {
   // ~111,111 m per degree latitude; longitude scales by cos(latitude)
   const dLat = (lat2 - lat1) * 111111;
-  const dLng = (lng2 - lng1) * 111111 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  const dLng =
+    (lng2 - lng1) * 111111 * Math.cos((((lat1 + lat2) / 2) * Math.PI) / 180);
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
@@ -36,68 +45,83 @@ async function getNextCheckpointId(currentCp, t) {
   return next ? next.id : null;
 }
 
-router.post("/checkpoints/:checkpointId/attempt", requireAuth, async (req, res) => {
-  const { checkpointId } = req.params;
-  const { answer, userHuntId, lat, lng } = req.body || {};
+router.post(
+  "/checkpoints/:checkpointId/attempt",
+  requireAuth,
+  async (req, res) => {
+    const { checkpointId } = req.params;
+    const { answer, userHuntId, lat, lng } = req.body || {};
 
-  // Basic validation
-  const cpId = Number(checkpointId);
-  if (!Number.isInteger(cpId) || cpId <= 0) {
-    return res.status(400).json({ error: "Invalid checkpointId" });
-  }
-  if (typeof answer !== "string" || answer.trim() === "") {
-    return res.status(400).json({ error: "answer is required" });
-  }
-
-  const t = await sequelize.transaction();
-  try {
-    // Load checkpoint and current user's hunt participation
-    const cp = await Checkpoint.findByPk(cpId, { transaction: t, lock: t.LOCK.UPDATE });
-    if (!cp) {
-      await t.rollback();
-      return res.status(404).json({ error: "Checkpoint not found" });
+    // Basic validation
+    const cpId = Number(checkpointId);
+    if (!Number.isInteger(cpId) || cpId <= 0) {
+      return res.status(400).json({ error: "Invalid checkpointId" });
+    }
+    if (typeof answer !== "string" || answer.trim() === "") {
+      return res.status(400).json({ error: "answer is required" });
     }
 
-    const uh = userHuntId
-      ? await UserHunt.findByPk(userHuntId, { transaction: t, lock: t.LOCK.UPDATE })
-      : null;
+    const t = await sequelize.transaction();
+    try {
+      // Load checkpoint and current user's hunt participation
+      const cp = await Checkpoint.findByPk(cpId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!cp) {
+        await t.rollback();
+        return res.status(404).json({ error: "Checkpoint not found" });
+      }
 
-    if (!uh) {
-      await t.rollback();
-      return res.status(400).json({ error: "userHuntId is required or invalid" });
-    }
+      const uh = userHuntId
+        ? await UserHunt.findByPk(userHuntId, {
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          })
+        : null;
 
-    // Verify this checkpoint belongs to the same hunt as user's hunt
-    if (uh.huntId !== cp.huntId) {
-      await t.rollback();
-      return res.status(400).json({ error: "Checkpoint does not belong to this hunt" });
-    }
+      if (!uh) {
+        await t.rollback();
+        return res
+          .status(400)
+          .json({ error: "userHuntId is required or invalid" });
+      }
 
-    // Ensure/lock progress row
-    let progress = await UserCheckpointProgress.findOne({
-      where: { userHuntId: uh.id, checkpointId: cp.id },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
+      // Verify this checkpoint belongs to the same hunt as user's hunt
+      if (uh.huntId !== cp.huntId) {
+        await t.rollback();
+        return res
+          .status(400)
+          .json({ error: "Checkpoint does not belong to this hunt" });
+      }
 
-    if (!progress) {
-      progress = await UserCheckpointProgress.create(
-        { userHuntId: uh.id, checkpointId: cp.id, attemptsCount: 0 },
-        { transaction: t }
-      );
-      await progress.reload({ transaction: t, lock: t.LOCK.UPDATE });
-    }
+      // Ensure/lock progress row
+      let progress = await UserCheckpointProgress.findOne({
+        where: { userHuntId: uh.id, checkpointId: cp.id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
 
-    // Enforce per-checkpoint limit, if set
-    if (cp.maxAttempts && progress.attemptsCount >= cp.maxAttempts) {
-      await t.rollback();
-      return res.status(403).json({ error: "Attempt limit reached for this checkpoint" });
-    }
+      if (!progress) {
+        progress = await UserCheckpointProgress.create(
+          { userHuntId: uh.id, checkpointId: cp.id, attemptsCount: 0 },
+          { transaction: t }
+        );
+        await progress.reload({ transaction: t, lock: t.LOCK.UPDATE });
+      }
 
-    // Evaluate correctness (swap to hash compare later)
-    const wasCorrect = norm(answer) === norm(cp.answer);
+      // Enforce per-checkpoint limit, if set
+      if (cp.maxAttempts && progress.attemptsCount >= cp.maxAttempts) {
+        await t.rollback();
+        return res
+          .status(403)
+          .json({ error: "Attempt limit reached for this checkpoint" });
+      }
 
-    /*
+      // Evaluate correctness (swap to hash compare later)
+      const wasCorrect = norm(answer) === norm(cp.answer);
+
+      /*
      Optional geofence check (disabled by default; wire cp.tolerance if needed)
      if (cp.lat != null && cp.lng != null && cp.tolerance != null && lat != null && lng != null) {
        const dist = metersBetween(Number(lat), Number(lng), cp.lat, cp.lng);
@@ -108,90 +132,97 @@ router.post("/checkpoints/:checkpointId/attempt", requireAuth, async (req, res) 
      }
     */
 
-    // Record attempt
-    await CheckpointAttempt.create(
-    {
-      userHuntId: uh.id,
-      checkpointId: cp.id,
-      riddleAnswer: String(answer),
-      wasCorrect, // JScript Object Shorthand doesn't need key and value repeated if they're the same name
-      attemptLat: lat ?? null,
-      attemptLng: lng ?? null,
-    },
-    { transaction: t }
-  );
+      // Record attempt
+      await CheckpointAttempt.create(
+        {
+          userHuntId: uh.id,
+          checkpointId: cp.id,
+          riddleAnswer: String(answer),
+          wasCorrect, // JScript Object Shorthand doesn't need key and value repeated if they're the same name
+          attemptLat: lat ?? null,
+          attemptLng: lng ?? null,
+        },
+        { transaction: t }
+      );
 
-
-    // Update progress counters & solved flag
-    progress.attemptsCount += 1;
-    if (wasCorrect && !progress.solvedAt) {
-      progress.solvedAt = new Date();
-    }
-    await progress.save({ transaction: t });
-
-    // If correct, compute next checkpoint (or mark hunt finished)
-    let nextCheckpointId = null;
-    if (wasCorrect) {
-      nextCheckpointId = await getNextCheckpointId(cp, t);
-
-      // If this was the last checkpoint, mark hunt as completed
-      if (!nextCheckpointId) {
-        uh.status = "completed";
-        uh.completedAt = new Date();
-        // compute simple total seconds if startedAt exists
-        if (uh.startedAt) {
-          uh.totalTimeSeconds = Math.max(0, Math.floor((uh.completedAt.getTime() - uh.startedAt.getTime()) / 1000));
-        }
-        await uh.save({ transaction: t });
+      // Update progress counters & solved flag
+      progress.attemptsCount += 1;
+      if (wasCorrect && !progress.solvedAt) {
+        progress.solvedAt = new Date();
       }
-    }
+      await progress.save({ transaction: t });
 
-    // Badge granting (only when correct) 
-    let grantedBadge = null;
-    if (wasCorrect) {
-      try {
-        const userId = await resolveUserId(req, userHuntId, t);
-        if (userId) {
-          const badge = await Badge.findOne({
-            where: { checkpointId: cp.id },
-            transaction: t,
-          });
-          if (badge) {
-            const [userBadge, created] = await UserBadge.findOrCreate({
-              where: { userId, badgeId: badge.id },
-              defaults: { userId, badgeId: badge.id, earnedAt: new Date() },
+      // If correct, compute next checkpoint (or mark hunt finished)
+      let nextCheckpointId = null;
+      if (wasCorrect) {
+        nextCheckpointId = await getNextCheckpointId(cp, t);
+
+        // If this was the last checkpoint, mark hunt as completed
+        if (!nextCheckpointId) {
+          uh.status = "completed";
+          uh.completedAt = new Date();
+          // compute simple total seconds if startedAt exists
+          if (uh.startedAt) {
+            uh.totalTimeSeconds = Math.max(
+              0,
+              Math.floor(
+                (uh.completedAt.getTime() - uh.startedAt.getTime()) / 1000
+              )
+            );
+          }
+          await uh.save({ transaction: t });
+        }
+      }
+
+      // Badge granting (only when correct)
+      let grantedBadge = null;
+      if (wasCorrect) {
+        try {
+          const userId = await resolveUserId(req, userHuntId, t);
+          if (userId) {
+            const badge = await Badge.findOne({
+              where: { checkpointId: cp.id },
               transaction: t,
             });
-            grantedBadge = {
-              id: badge.id,
-              name: badge.name,
-              imageUrl: badge.imageUrl,
-              description: badge.description || null,
-              newlyEarned: created,
-            };
+            if (badge) {
+              const [userBadge, created] = await UserBadge.findOrCreate({
+                where: { userId, badgeId: badge.id },
+                defaults: { userId, badgeId: badge.id, earnedAt: new Date() },
+                transaction: t,
+              });
+              grantedBadge = {
+                id: badge.id,
+                title: badge.title,
+                image: badge.image,
+                description: badge.description || null,
+                newlyEarned: created,
+              };
+            }
           }
+        } catch (e) {
+          // Non-blocking: badge grant should not break the core play loop
+          console.warn("Badge grant failed (non-blocking):", e?.message || e);
         }
-      } catch (e) {
-        // Non-blocking: badge grant should not break the core play loop
-        console.warn("Badge grant failed (non-blocking):", e?.message || e);
       }
-    }
 
-    await t.commit();
-    return res.json({
-      ok: true,
-      wasCorrect,
-      attemptsUsed: progress.attemptsCount,
-      attemptsRemaining: cp.maxAttempts ? Math.max(0, cp.maxAttempts - progress.attemptsCount) : null,
-      nextCheckpointId,
-      finished: wasCorrect && !nextCheckpointId,
-      badge: grantedBadge || null,
-    });
-  } catch (err) {
-    await t.rollback();
-    console.error("submit attempt failed", err);
-    return res.status(500).json({ error: "Failed to submit attempt" });
+      await t.commit();
+      return res.json({
+        ok: true,
+        wasCorrect,
+        attemptsUsed: progress.attemptsCount,
+        attemptsRemaining: cp.maxAttempts
+          ? Math.max(0, cp.maxAttempts - progress.attemptsCount)
+          : null,
+        nextCheckpointId,
+        finished: wasCorrect && !nextCheckpointId,
+        badge: grantedBadge || null,
+      });
+    } catch (err) {
+      await t.rollback();
+      console.error("submit attempt failed", err);
+      return res.status(500).json({ error: "Failed to submit attempt" });
+    }
   }
-});
+);
 
 module.exports = router;
