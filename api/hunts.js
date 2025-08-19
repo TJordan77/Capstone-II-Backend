@@ -5,6 +5,7 @@ const { UserHunt, HuntInvite } = require("../database");
 const { Op } = require("sequelize"); // added for simple date filters
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
++ const { User, Badge, UserBadge, UserCheckpointProgress } = require("../database"); // needed for profile endpoints
 
 function generateAccessCode(len = 6) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -575,6 +576,118 @@ router.post("/:id/checkpoints", /* requireAuth, */ async (req, res) => {
     console.error("POST /api/hunts/:id/checkpoints failed:", e);
     return res.status(500).json({ error: "Failed to add checkpoint" });
   }
+});
+
+/* ====== Minimal Profile Endpoints (mounted under this router) ====== */
+/* NOTE: Hey so because these are defined in this file, their effective paths will be
+   prefixed by wherever this router is mounted (e.g., /api/hunts).
+   Resulting examples (Assuming we're mounted at /api/hunts):
+     - GET /api/hunts/users/me
+     - GET /api/hunts/users/:id
+     - GET /api/hunts/users/:id/badges
+     - GET /api/hunts/users/:id/hunts/created
+     - GET /api/hunts/users/:id/hunts/joined
+*/
+
+// small shapers kept local
+function pickUser(u) {
+  return {
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    avatarUrl: u.avatarUrl || null,
+    createdAt: u.createdAt,
+  };
+}
+function pickHunt(h) {
+  return {
+    id: h.id,
+    title: h.title || h.name,
+    description: h.description,
+    coverUrl: h.coverUrl,
+    isActive: !!(h.isActive ?? (h.endsAt ? new Date(h.endsAt) > new Date() : true)),
+    createdAt: h.createdAt,
+    updatedAt: h.updatedAt,
+  };
+}
+function pickBadge(b, earnedAt) {
+  return {
+    id: b.id,
+    name: b.name,
+    imageUrl: b.imageUrl,
+    description: b.description,
+    earnedAt,
+  };
+}
+
+// GET /users/me
+router.get("/users/me", /* requireAuth, */ async (req, res) => {
+  const userId = req.user?.id || req.user?.userId;
+  if (!userId) return res.status(401).json({ error: "Not authenticated" });
+  const me = await User.findByPk(userId);
+  if (!me) return res.status(404).json({ error: "User not found" });
+  res.json(pickUser(me));
+});
+
+// GET /users/:id
+router.get("/users/:id", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+  const user = await User.findByPk(id);
+  if (!user) return res.status(404).json({ error: "User not found" });
+  res.json(pickUser(user));
+});
+
+// GET /users/:id/badges
+router.get("/users/:id/badges", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+  const rows = await UserBadge.findAll({
+    where: { userId: id },
+    include: [{ model: Badge, as: "badge" }],
+    order: [["createdAt", "DESC"]],
+  });
+  const badges = rows.filter(r => r.badge).map(r => pickBadge(r.badge, r.createdAt));
+  res.json(badges);
+});
+
+// GET /users/:id/hunts/created
+router.get("/users/:id/hunts/created", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+  const hunts = await Hunt.findAll({
+    where: { creatorId: id },
+    order: [["createdAt", "DESC"]],
+  });
+  res.json(hunts.map(pickHunt));
+});
+
+// GET /users/:id/hunts/joined
+router.get("/users/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+
+  const joins = await UserHunt.findAll({
+    where: { userId: id },
+    include: [{ model: Hunt, as: "hunt" }],
+    order: [["createdAt", "DESC"]],
+  });
+
+  const results = [];
+  for (const j of joins) {
+    if (!j.hunt) continue;
+    const solved = await UserCheckpointProgress.count({
+      where: { userId: id, huntId: j.huntId, solvedAt: { [Op.ne]: null } },
+    });
+    results.push({
+      ...pickHunt(j.hunt),
+      userHuntId: j.id,
+      joinedAt: j.createdAt,
+      completedAt: j.completedAt,
+      solvedCount: solved,
+    });
+  }
+  res.json(results);
 });
 
 module.exports = router;
