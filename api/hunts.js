@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { sequelize, Hunt, Checkpoint } = require("../database");
 const { UserHunt, HuntInvite } = require("../database");
+const { Op } = require("sequelize"); // added for simple date filters
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
 
@@ -25,6 +26,29 @@ async function ensureUniqueSlug(baseSlug) {
     if (n > 1000) break; // safety guard
   }
   return slug;
+}
+
+// Small helpers for creator stats (minimal, local to this file)
+function computeIsActive(hunt, now = new Date()) {
+  if (typeof hunt.isActive === "boolean") return hunt.isActive;
+  if (hunt.endsAt instanceof Date) return hunt.endsAt > now;
+  return true;
+}
+async function playersCountByHunt(huntIds = []) {
+  if (!huntIds.length) return {};
+  const [rows] = await sequelize.query(
+    `
+    SELECT "huntId", COUNT(DISTINCT "userId")::int AS players
+    FROM "UserHunts"
+    WHERE "huntId" = ANY(:ids)
+    GROUP BY "huntId"
+    `,
+    { replacements: { ids: huntIds } }
+  );
+  return rows.reduce((acc, r) => {
+    acc[r.huntId] = r.players;
+    return acc;
+  }, {});
 }
 
 // POST /api/hunts
@@ -287,6 +311,7 @@ router.post("/slug/:slug/join", /* requireAuth, */ async (req, res) => {
 /* ====== Creator Dashboard / Route Designer additions (minimal changes) ====== */
 
 // GET /api/hunts/creator/:id  -> list a creator's hunts (includes checkpoints)
+// now also returns playersCount + normalized isActive for each hunt
 router.get("/creator/:id", /* requireAuth, */ async (req, res) => {
   const creatorId = Number(req.params.id);
   if (!Number.isInteger(creatorId) || creatorId <= 0) {
@@ -301,10 +326,140 @@ router.get("/creator/:id", /* requireAuth, */ async (req, res) => {
         [{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"],
       ],
     });
-    return res.json(hunts);
+
+    const ids = hunts.map(h => h.id);
+    const counts = await playersCountByHunt(ids);
+    const now = new Date();
+
+    const payload = hunts.map(h => {
+      const j = h.toJSON();
+      return {
+        ...j,
+        isActive: computeIsActive(j, now),
+        playersCount: counts[h.id] || 0,
+      };
+    });
+
+    return res.json(payload);
   } catch (e) {
     console.error("GET /api/hunts/creator/:id failed:", e);
     return res.status(500).json({ error: "Failed to load creator hunts" });
+  }
+});
+
+// GET /api/hunts/creator/:id/stats  -> totals for dashboard tiles
+router.get("/creator/:id/stats", /* requireAuth, */ async (req, res) => {
+  const creatorId = Number(req.params.id);
+  if (!Number.isInteger(creatorId) || creatorId <= 0) {
+    return res.status(400).json({ error: "Invalid creator id" });
+  }
+  try {
+    const total = await Hunt.count({ where: { creatorId } });
+
+    const activeHunts = await Hunt.findAll({
+      where: {
+        creatorId,
+        [Op.or]: [{ isActive: true }, { endsAt: { [Op.gt]: new Date() } }],
+      },
+      attributes: ["id"],
+    });
+    const activeIds = activeHunts.map(h => h.id);
+
+    let activePlayers = 0;
+    if (activeIds.length) {
+      const [rowset] = await sequelize.query(
+        `
+        SELECT COUNT(DISTINCT "userId")::int AS count
+        FROM "UserHunts"
+        WHERE "huntId" = ANY(:ids)
+        `,
+        { replacements: { ids: activeIds } }
+      );
+      activePlayers = rowset?.[0]?.count || 0;
+    }
+
+    const completed = await Hunt.count({
+      where: {
+        creatorId,
+        [Op.or]: [{ isActive: false }, { endsAt: { [Op.lte]: new Date() } }],
+      },
+    });
+
+    return res.json({ total, activePlayers, completed });
+  } catch (e) {
+    console.error("GET /api/hunts/creator/:id/stats failed:", e);
+    return res.status(500).json({ error: "Failed to compute creator stats" });
+  }
+});
+
+// GET /api/hunts/creator/:id/overview -> { stats, hunts } in one call
+router.get("/creator/:id/overview", /* requireAuth, */ async (req, res) => {
+  const creatorId = Number(req.params.id);
+  if (!Number.isInteger(creatorId) || creatorId <= 0) {
+    return res.status(400).json({ error: "Invalid creator id" });
+  }
+  try {
+    const total = await Hunt.count({ where: { creatorId } });
+
+    const activeHunts = await Hunt.findAll({
+      where: {
+        creatorId,
+        [Op.or]: [{ isActive: true }, { endsAt: { [Op.gt]: new Date() } }],
+      },
+      attributes: ["id"],
+    });
+    const activeIds = activeHunts.map(h => h.id);
+
+    let activePlayers = 0;
+    if (activeIds.length) {
+      const [rowset] = await sequelize.query(
+        `
+        SELECT COUNT(DISTINCT "userId")::int AS count
+        FROM "UserHunts"
+        WHERE "huntId" = ANY(:ids)
+        `,
+        { replacements: { ids: activeIds } }
+      );
+      activePlayers = rowset?.[0]?.count || 0;
+    }
+
+    const completed = await Hunt.count({
+      where: {
+        creatorId,
+        [Op.or]: [{ isActive: false }, { endsAt: { [Op.lte]: new Date() } }],
+      },
+    });
+
+    const hunts = await Hunt.findAll({
+      where: { creatorId },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [
+        ["createdAt", "DESC"],
+        [{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"],
+      ],
+      attributes: { exclude: [] },
+    });
+
+    const ids = hunts.map(h => h.id);
+    const counts = await playersCountByHunt(ids);
+    const now = new Date();
+
+    const huntsPayload = hunts.map(h => {
+      const j = h.toJSON();
+      return {
+        ...j,
+        isActive: computeIsActive(j, now),
+        playersCount: counts[h.id] || 0,
+      };
+    });
+
+    return res.json({
+      stats: { total, activePlayers, completed },
+      hunts: huntsPayload,
+    });
+  } catch (e) {
+    console.error("GET /api/hunts/creator/:id/overview failed:", e);
+    return res.status(500).json({ error: "Failed to load creator overview" });
   }
 });
 
