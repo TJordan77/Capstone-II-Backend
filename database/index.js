@@ -18,6 +18,7 @@ const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
 const UserCheckpointProgress = require("./userCheckpointProgress");
+const { Badge } = require("./index");
 
 // Hunt.creator -> User
 Hunt.belongsTo(User, {
@@ -90,6 +91,15 @@ Badge.belongsToMany(User, {
   foreignKey: { name: "badgeId", field: "badge_id" },
   otherKey: { name: "userId", field: "user_id" },
   as: "owners",
+});
+
+// Direct refs from the join table (needed for includes using `as: "badge"`)
+UserBadge.belongsTo(User, {
+  foreignKey: { name: "userId", field: "user_id" },
+});
+UserBadge.belongsTo(Badge, {
+  as: "badge",
+  foreignKey: { name: "badgeId", field: "badge_id" },
 });
 
 // Attempts belong to UserHunt & Checkpoint
