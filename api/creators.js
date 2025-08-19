@@ -72,8 +72,14 @@ async function getPlayersCountByHunt(huntIds) {
       acc[r.huntId] = r.players;
       return acc;
     }, {});
-  }
   */
+
+  // return the UserHunt-based counts by default
+  return rows.reduce((acc, r) => {
+    acc[r.huntId] = r.players;
+    return acc;
+  }, {});
+}
 
 // GET /api/creators/:creatorId/stats
 //  Returns { total, activePlayers, completed }
