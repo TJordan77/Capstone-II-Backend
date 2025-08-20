@@ -30,7 +30,8 @@ function pickUser(u) {
     id: u.id,
     username: u.username,
     email: u.email,
-    avatarUrl: u.avatarUrl || null,
+    // your model uses profilePicture, not avatarUrl
+    avatarUrl: u.profilePicture || null,
     createdAt: u.createdAt,
   };
 }
@@ -48,8 +49,9 @@ function pickHunt(h) {
 function pickBadge(b, earnedAt) {
   return {
     id: b.id,
-    name: b.name,
-    imageUrl: b.imageUrl,
+    // map DB fields (title/image) to API shape
+    name: b.title ?? b.name,
+    imageUrl: b.image ?? b.imageUrl,
     description: b.description,
     earnedAt,
   };
@@ -88,12 +90,16 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
   try {
-    const rows = await UserBadge.findAll({
-      where: { userId: id },
-      include: [{ model: Badge, as: "badge" }],
-      order: [["createdAt", "DESC"]],
+    // Use existing User <-> Badge belongsToMany (alias: "badges")
+    const user = await User.findByPk(id, {
+      include: [{ model: Badge, as: "badges", through: { attributes: ["createdAt"] } }],
+      attributes: ["id"],
     });
-    const badges = rows.filter(r => r.badge).map(r => pickBadge(r.badge, r.createdAt));
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const badges = (user.badges || []).map((b) =>
+      pickBadge(b, b.UserBadge?.createdAt || b.createdAt)
+    );
     res.json(badges);
   } catch (e) {
     console.error("GET /api/users/:id/badges failed:", e);
