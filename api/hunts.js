@@ -218,27 +218,41 @@ router.post("/join", async (req, res) => {
     const code = String(req.body?.joinCode || "").trim().toUpperCase();
     if (!code) return res.status(400).json({ error: "joinCode is required" });
 
-    // Try direct accessCode only (no invites)
-    const hunt = await Hunt.findOne({ where: { accessCode: code } });
+    const hunt = await Hunt.findOne({
+      where: { accessCode: code },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
+    });
     if (!hunt) return res.status(404).json({ error: "Invalid join code" });
 
+    // optional: record participation
     let userHuntId = null;
     const userId = req.user?.id || req.user?.userId;
     if (userId && typeof UserHunt !== "undefined") {
       const [row] = await UserHunt.findOrCreate({
         where: { userId, huntId: hunt.id },
-        // IMPORTANT: use your enum values; seed uses "active"/"completed"
         defaults: { userId, huntId: hunt.id, status: "active", startedAt: new Date() },
       });
       userHuntId = row.id;
     }
 
-    return res.json({ huntId: hunt.id, userHuntId });
+    const firstCheckpointId = hunt.checkpoints?.[0]?.id ?? null;
+
+    return res.json({
+      huntId: hunt.id,
+      slug: hunt.slug || null,
+      firstCheckpointId,
+      userHuntId,
+      // add tiny bit of metadata if your UI uses it
+      title: hunt.title,
+      accessCode: hunt.accessCode,
+    });
   } catch (e) {
-    console.error("POST /api/hunts/join failed:", e?.message || e, e?.stack);
+    console.error("POST /api/hunts/join failed:", e?.message || e);
     return res.status(500).json({ error: "Failed to join hunt" });
   }
 });
+
 
 // POST /api/hunts/:idOrSlug/join
 // Direct-join by either numeric id OR slug in one endpoint. Returns userHuntId (if logged in) and first checkpoint to start
