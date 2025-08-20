@@ -141,6 +141,24 @@ router.post("/", /* requireAuth, */ async (req, res) => {
   }
 });
 
+// GET /api/hunts/slug/:slug
+// Returns a hunt by slug with its checkpoints ordered by `order` ASC
+router.get("/slug/:slug", async (req, res) => {
+  const slug = String(req.params.slug || "").trim().toLowerCase();
+  if (!slug) return res.status(400).json({ error: "Invalid slug" });
+  try {
+    const hunt = await Hunt.findOne({
+      where: { slug },
+      include: [{ model: Checkpoint, as: "checkpoints" }],
+      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
+    });
+    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
+    return res.json(hunt);
+  } catch (e) {
+    console.error("GET /api/hunts/slug/:slug failed:", e);
+    return res.status(500).json({ error: "Failed to load hunt" });
+  }
+});
 
 // GET /api/hunts/:id
 // Returns a hunt with its checkpoints ordered by `order` ASC
@@ -171,25 +189,6 @@ router.get("/:id", async (req, res) => {
       db: e.original?.message || e.parent?.message,
       detail: e.original?.detail || e.parent?.detail,
     });
-    return res.status(500).json({ error: "Failed to load hunt" });
-  }
-});
-
-// GET /api/hunts/slug/:slug
-// Returns a hunt by slug with its checkpoints ordered by `order` ASC
-router.get("/slug/:slug", async (req, res) => {
-  const slug = String(req.params.slug || "").trim().toLowerCase();
-  if (!slug) return res.status(400).json({ error: "Invalid slug" });
-  try {
-    const hunt = await Hunt.findOne({
-      where: { slug },
-      include: [{ model: Checkpoint, as: "checkpoints" }],
-      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
-    });
-    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
-    return res.json(hunt);
-  } catch (e) {
-    console.error("GET /api/hunts/slug/:slug failed:", e);
     return res.status(500).json({ error: "Failed to load hunt" });
   }
 });
