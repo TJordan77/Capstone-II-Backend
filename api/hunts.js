@@ -201,14 +201,15 @@ router.post("/join", async (req, res) => {
     const code = String(req.body?.joinCode || "").trim().toUpperCase();
     if (!code) return res.status(400).json({ error: "joinCode is required" });
 
+    // Try direct accessCode first
     let hunt = await Hunt.findOne({ where: { accessCode: code } });
 
+    // Fallback: HuntInvite -> then fetch Hunt by primary key (no include)
     if (!hunt && typeof HuntInvite !== "undefined") {
-      const invite = await HuntInvite.findOne({
-        where: { code },
-        include: [{ model: Hunt, as: "hunt" }],
-      });
-      if (invite?.hunt) hunt = invite.hunt;
+      const invite = await HuntInvite.findOne({ where: { code } });
+      if (invite?.huntId) {
+        hunt = await Hunt.findByPk(invite.huntId);
+      }
     }
 
     if (!hunt) return res.status(404).json({ error: "Invalid join code" });
@@ -220,12 +221,12 @@ router.post("/join", async (req, res) => {
         where: { userId, huntId: hunt.id },
         defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
       });
-        userHuntId = row.id;
+      userHuntId = row.id;
     }
 
     return res.json({ huntId: hunt.id, userHuntId });
   } catch (e) {
-    console.error("POST /api/hunts/join failed:", e);
+    console.error("POST /api/hunts/join failed:", e?.message || e, e?.stack);
     return res.status(500).json({ error: "Failed to join hunt" });
   }
 });
