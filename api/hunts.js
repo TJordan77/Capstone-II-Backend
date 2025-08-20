@@ -13,7 +13,7 @@ function generateAccessCode(len = 6) {
   return out;
 }
 
-// Pretty URL helpers for slug routing (kept minimal)
+// Pretty URL helpers for slug routing
 function slugify(s = "") {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -28,7 +28,7 @@ async function ensureUniqueSlug(baseSlug) {
   return slug;
 }
 
-// Small helpers for creator stats (minimal, local to this file)
+// Small helpers for creator stats (local to this file)
 function computeIsActive(hunt, now = new Date()) {
   if (typeof hunt.isActive === "boolean") return hunt.isActive;
   if (hunt.endsAt instanceof Date) return hunt.endsAt > now;
@@ -230,17 +230,19 @@ router.post("/join", async (req, res) => {
   }
 });
 
-// POST /api/hunts/:huntId/join
-// Direct-join by huntId (no code). Returns userHuntId (if logged in), and first checkpoint to start
-router.post("/:huntId/join", /* requireAuth, */ async (req, res) => {
+// POST /api/hunts/:idOrSlug/join
+// Direct-join by either numeric id OR slug in one endpoint. Returns userHuntId (if logged in) and first checkpoint to start
+router.post("/:idOrSlug/join", /* requireAuth, */ async (req, res) => {
   try {
-    const huntId = Number(req.params.huntId);
-    if (!Number.isInteger(huntId) || huntId <= 0) {
-      return res.status(400).json({ error: "Invalid huntId" });
-    }
+    const idOrSlug = String(req.params.idOrSlug || "").trim().toLowerCase();
+    if (!idOrSlug) return res.status(400).json({ error: "Invalid id or slug" });
+
+    // If all digits → treat as id; otherwise → slug
+    const where = /^\d+$/.test(idOrSlug) ? { id: Number(idOrSlug) } : { slug: idOrSlug };
 
     // Pull checkpoints ordered by `order` ASC
-    const hunt = await Hunt.findByPk(huntId, {
+    const hunt = await Hunt.findOne({
+      where,
       include: [{ model: Checkpoint, as: "checkpoints" }],
       order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
     });
@@ -248,43 +250,6 @@ router.post("/:huntId/join", /* requireAuth, */ async (req, res) => {
     if (!hunt) return res.status(404).json({ error: "Hunt not found" });
 
     // Create or find the user's participation row (if authenticated)
-    let userHuntId = null;
-    const userId = req.user?.id || req.user?.userId;
-    if (userId && typeof UserHunt !== "undefined") {
-      const [row] = await UserHunt.findOrCreate({
-        where: { userId, huntId },
-        defaults: { userId, huntId, status: "joined", startedAt: new Date() },
-      });
-      userHuntId = row.id;
-    }
-
-    const firstCheckpoint = hunt.checkpoints?.[0] || null;
-
-    return res.json({
-      userHuntId,
-      firstCheckpointId: firstCheckpoint?.id || null,
-    });
-  } catch (e) {
-    console.error("POST /api/hunts/:huntId/join failed:", e);
-    return res.status(500).json({ error: "Failed to join hunt" });
-  }
-});
-
-// POST /api/hunts/slug/:slug/join
-// Direct-join by slug (no code). Mirrors /:huntId/join
-router.post("/slug/:slug/join", /* requireAuth, */ async (req, res) => {
-  try {
-    const slug = String(req.params.slug || "").trim().toLowerCase();
-    if (!slug) return res.status(400).json({ error: "Invalid slug" });
-
-    const hunt = await Hunt.findOne({
-      where: { slug },
-      include: [{ model: Checkpoint, as: "checkpoints" }],
-      order: [[{ model: Checkpoint, as: "checkpoints" }, "order", "ASC"]],
-    });
-
-    if (!hunt) return res.status(404).json({ error: "Hunt not found" });
-
     let userHuntId = null;
     const userId = req.user?.id || req.user?.userId;
     if (userId && typeof UserHunt !== "undefined") {
@@ -303,12 +268,12 @@ router.post("/slug/:slug/join", /* requireAuth, */ async (req, res) => {
       firstCheckpointId: firstCheckpoint?.id || null,
     });
   } catch (e) {
-    console.error("POST /api/hunts/slug/:slug/join failed:", e);
+    console.error("POST /api/hunts/:idOrSlug/join failed:", e);
     return res.status(500).json({ error: "Failed to join hunt" });
   }
 });
 
-/* ====== Creator Dashboard / Route Designer additions (minimal changes) ====== */
+/* ====== Creator Dashboard / Route Designer  ====== */
 
 // GET /api/hunts/creator/:id  -> list a creator's hunts (includes checkpoints)
 // now also returns playersCount + normalized isActive for each hunt
@@ -463,7 +428,7 @@ router.get("/creator/:id/overview", /* requireAuth, */ async (req, res) => {
   }
 });
 
-// PATCH /api/hunts/:id  -> update title/description (minimal surface per spec)
+// PATCH /api/hunts/:id  -> update title/description 
 router.patch("/:id", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
