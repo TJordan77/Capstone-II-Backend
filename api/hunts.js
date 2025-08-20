@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { sequelize, Hunt, Checkpoint } = require("../database");
-const { UserHunt, HuntInvite } = require("../database");
+const { sequelize, Hunt, Checkpoint, UserHunt } = require("../database");
 const { Op } = require("sequelize"); // added for simple date filters
 // Just incase we want the hunt routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
@@ -200,17 +199,8 @@ router.post("/join", async (req, res) => {
     const code = String(req.body?.joinCode || "").trim().toUpperCase();
     if (!code) return res.status(400).json({ error: "joinCode is required" });
 
-    // Try direct accessCode first
-    let hunt = await Hunt.findOne({ where: { accessCode: code } });
-
-    // Fallback: HuntInvite -> then fetch Hunt by primary key (no include)
-    if (!hunt && typeof HuntInvite !== "undefined") {
-      const invite = await HuntInvite.findOne({ where: { code } });
-      if (invite?.huntId) {
-        hunt = await Hunt.findByPk(invite.huntId);
-      }
-    }
-
+    // Try direct accessCode only (no invites)
+    const hunt = await Hunt.findOne({ where: { accessCode: code } });
     if (!hunt) return res.status(404).json({ error: "Invalid join code" });
 
     let userHuntId = null;
@@ -218,7 +208,8 @@ router.post("/join", async (req, res) => {
     if (userId && typeof UserHunt !== "undefined") {
       const [row] = await UserHunt.findOrCreate({
         where: { userId, huntId: hunt.id },
-        defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
+        // IMPORTANT: use your enum values; seed uses "active"/"completed"
+        defaults: { userId, huntId: hunt.id, status: "active", startedAt: new Date() },
       });
       userHuntId = row.id;
     }
@@ -255,7 +246,7 @@ router.post("/:idOrSlug/join", /* requireAuth, */ async (req, res) => {
     if (userId && typeof UserHunt !== "undefined") {
       const [row] = await UserHunt.findOrCreate({
         where: { userId, huntId: hunt.id },
-        defaults: { userId, huntId: hunt.id, status: "joined", startedAt: new Date() },
+        defaults: { userId, huntId: hunt.id, status: "active", startedAt: new Date() },
       });
       userHuntId = row.id;
     }
