@@ -171,6 +171,51 @@ router.post(
             );
           }
           await uh.save({ transaction: t });
+
+          // ===== Derived badge grants (non-blocking, core 3 only) =====
+          try {
+            const userId = uh.userId;
+
+            // Pathfinder: first full hunt completed
+            const pf = await Badge.findOne({ where: { title: "Pathfinder" }, transaction: t });
+            if (pf) {
+              await UserBadge.findOrCreate({
+                where: { userId, badgeId: pf.id },
+                defaults: { userId, badgeId: pf.id },
+                transaction: t,
+              });
+            }
+
+            // Speedrunner: completed under X mins (adjust threshold)
+            const SPEEDRUN_SECS = 30 * 60;
+            if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
+              const sr = await Badge.findOne({ where: { title: "Speedrunner" }, transaction: t });
+              if (sr) {
+                await UserBadge.findOrCreate({
+                  where: { userId, badgeId: sr.id },
+                  defaults: { userId, badgeId: sr.id },
+                  transaction: t,
+                });
+              }
+            }
+
+            // Badge Collector: earned 5+ badges total
+            const count = await UserBadge.count({ where: { userId }, transaction: t });
+            if (count >= 5) {
+              const bc = await Badge.findOne({ where: { title: "Badge Collector" }, transaction: t });
+              if (bc) {
+                await UserBadge.findOrCreate({
+                  where: { userId, badgeId: bc.id },
+                  defaults: { userId, badgeId: bc.id },
+                  transaction: t,
+                });
+              }
+            }
+
+            // Sharp Eye intentionally omitted here until "no hints" tracking is wired.
+          } catch (e) {
+            console.warn("Derived badge grant failed (non-blocking):", e?.message || e);
+          }
         }
       }
 
