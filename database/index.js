@@ -17,8 +17,7 @@ const Media = require("./media");
 const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
-const UserCheckpointProgress = require("./userCheckpointProgress");
-const { Badge } = require("./index");
+const UserCheckpointProgress = require("./userCheckpointProgress");  
 
 // Hunt.creator -> User
 Hunt.belongsTo(User, {
