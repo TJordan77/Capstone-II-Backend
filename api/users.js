@@ -156,4 +156,48 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   }
 });
 
+// GET /api/users/:id/overview - Added in to help playerdashboard
+router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+
+  try {
+    const [badgeRows, joins] = await Promise.all([
+      UserBadge.findAll({ where: { userId: id }, attributes: ["id"] }),
+      UserHunt.findAll({
+        where: { userId: id },
+        include: [{ model: Hunt, as: "hunt" }],
+        order: [["createdAt", "DESC"]],
+      }),
+    ]);
+
+    const hunts = [];
+    for (const j of joins) {
+      if (!j.hunt) continue;
+      hunts.push({
+        id: j.hunt.id,
+        title: j.hunt.title || j.hunt.name,
+        description: j.hunt.description,
+        coverUrl: j.hunt.coverUrl,
+        createdAt: j.hunt.createdAt,
+        updatedAt: j.hunt.updatedAt,
+        userHuntId: j.id,
+        joinedAt: j.createdAt,
+        completedAt: j.completedAt || null,
+      });
+    }
+
+    const stats = {
+      inProgress: hunts.filter(h => !h.completedAt).length,
+      completed: hunts.filter(h => !!h.completedAt).length,
+      badges: badgeRows.length,
+    };
+
+    res.json({ stats, hunts });
+  } catch (e) {
+    console.error("GET /api/users/:id/overview failed:", e);
+    res.status(500).json({ error: "Failed to load player overview" });
+  }
+});
+
 module.exports = router;
