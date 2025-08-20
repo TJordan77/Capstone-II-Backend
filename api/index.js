@@ -15,6 +15,7 @@ router.use("/checkpoints", checkpointsRouter);
 router.use("/creators", creatorsRouter);
 
 router.use("/users", require("./users"));
+router.use("/player", require("./users")); // alias /api/player -> users.js
 router.use("/badges", require("./badges"));
 
 module.exports = router;
