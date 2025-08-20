@@ -11,7 +11,9 @@ router.use("/test-db", testDbRouter);
 router.use("/hunts", huntsRouter); // /api/play/checkpoints/:checkpointId/attempt
 router.use("/play", playRouter);
 router.use("/leaderboard", leaderboardRouter); // /api/leaderboard/:huntId
-router.use("/checkpoints", checkpointsRouter); 
+router.use("/checkpoints", checkpointsRouter);
 router.use("/creators", creatorsRouter);
+
+router.use("/users", require("./users"));
 
 module.exports = router;
