@@ -37,10 +37,10 @@ async function playersCountByHunt(huntIds = []) {
   if (!huntIds.length) return {};
   const [rows] = await sequelize.query(
     `
-    SELECT "huntId", COUNT(DISTINCT "userId")::int AS players
-    FROM "UserHunts"
-    WHERE "huntId" = ANY(:ids)
-    GROUP BY "huntId"
+    SELECT hunt_id AS "huntId", COUNT(DISTINCT user_id)::int AS players
+    FROM user_hunts
+    WHERE hunt_id = ANY(:ids)
+    GROUP BY hunt_id
     `,
     { replacements: { ids: huntIds } }
   );
@@ -148,7 +148,11 @@ router.post("/", /* requireAuth, */ async (req, res) => {
     await Checkpoint.bulkCreate(rows, { transaction: t });
 
     await t.commit();
-    return res.status(201).json({ id: hunt.id, accessCode: hunt.accessCode });
+    return res.status(201).json({
+      id: hunt.id,
+      accessCode: hunt.accessCode,
+      slug: hunt.slug,
+    });
   } catch (err) {
     await t.rollback();
     console.error("POST /api/hunts failed:", err);
