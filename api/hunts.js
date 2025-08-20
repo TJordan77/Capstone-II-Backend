@@ -50,6 +50,25 @@ async function playersCountByHunt(huntIds = []) {
   }, {});
 }
 
+// GET /api/hunts/_diag -> quick proof-of-life for DB + first few hunts
+router.get("/_diag", async (req, res) => {
+  try {
+    const hunts = await Hunt.findAll({
+      attributes: ["id", "title", "accessCode"],
+      order: [["id", "ASC"]],
+      limit: 5,
+      raw: true,
+    });
+    res.json({
+      dbTail: process.env.DATABASE_URL?.slice(-28) || null, // helps us see which DB
+      hunts,
+    });
+  } catch (e) {
+    console.error("GET /api/hunts/_diag failed:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/hunts
 // Create a hunt + it's checkpoints
 router.post("/", /* requireAuth, */ async (req, res) => {
