@@ -13,6 +13,7 @@ const {
   HuntAdmin,
   LeaderboardEntry,
   UserBadge,
+  UserCheckpointProgress, // <-- minimal add: needed for progress seeds
 } = require("./index");
 
 const { Op } = require("sequelize"); // used once for IN query (safe to keep)
@@ -96,6 +97,51 @@ async function seed() {
       badgeCount: 0,
     });
 
+    // Extra users you requested
+    const tAdmin = await User.create({
+      firstName: "T",
+      lastName: "J",
+      username: "THE_icon",
+      email: "iconic@example.com",
+      passwordHash: User.hashPassword("Leader1"),
+      role: "admin",
+      profilePicture: "",
+      badgeCount: 5,
+    });
+
+    const barAdmin = await User.create({
+      firstName: "Bar",
+      lastName: "Y",
+      username: "baryaakov",
+      email: "bary@example.com",
+      passwordHash: User.hashPassword("Router1"),
+      role: "admin",
+      profilePicture: "",
+      badgeCount: 5,
+    });
+
+    const smedly = await User.create({
+      firstName: "Smedly",
+      lastName: "M",
+      username: "Click_Bait",
+      email: "click@example.com",
+      passwordHash: User.hashPassword("Click123"),
+      role: "player",
+      profilePicture: "",
+      badgeCount: 5,
+    });
+
+    const mohammed = await User.create({
+      firstName: "Mohammed",
+      lastName: "M",
+      username: "Mo-A-Is",
+      email: "moham@example.com",
+      passwordHash: User.hashPassword("Moham456"),
+      role: "player",
+      profilePicture: "",
+      badgeCount: 5,
+    });
+
     // --- Tutorial Hunt (CP1 at provided user location) ---
     const baseLat =
       process.env.START_LAT != null ? Number(process.env.START_LAT) : 40.7128;
@@ -111,9 +157,9 @@ async function seed() {
       throw new Error("Invalid START_LAT/START_LNG values provided.");
     }
 
-    const cp1LL = { lat: baseLat, lng: baseLng };              // start point (user location)
-    const cp2LL = offsetMeters(baseLat, baseLng, 150, 120);     // ~190m NE
-    const cp3LL = offsetMeters(baseLat, baseLng, -220, 240);    // ~330m NW
+    const cp1LL = { lat: baseLat, lng: baseLng }; // start point (user location)
+    const cp2LL = offsetMeters(baseLat, baseLng, 150, 120); // ~190m NE
+    const cp3LL = offsetMeters(baseLat, baseLng, -220, 240); // ~330m NW
 
     const tutorialHunt = await Hunt.create({
       title: "SideQuest Tutorial",
@@ -123,7 +169,6 @@ async function seed() {
       isActive: true,
       isPublished: true,
       version: 1,
-      // new hunt fields (ensure your model & migration include these)
       endsAt: new Date(Date.now() + 3 * 24 * 3600 * 1000), // +3 days
       maxPlayers: 500,
       visibility: "public",
@@ -167,11 +212,15 @@ async function seed() {
       tolerance: 35,
     });
 
-    // === BADGES for the tutorial checkpoints (uses your Badge model fields) ===
+    // === BADGES (only the ones you listed) ===
+    // Attach the checkpoint-specific “first checkpoint” to tutorial CP1
     await Badge.bulkCreate([
-      { checkpointId: tut1.id, title: "Trailhead",  description: "Started your first SideQuest.", image: "/badges/trailhead.png" },
-      { checkpointId: tut2.id, title: "Pathfinder", description: "You found the green spot.",     image: "/badges/pathfinder.png" },
-      { checkpointId: tut3.id, title: "Finisher",   description: "You completed the tutorial!",   image: "/badges/finisher.png" },
+      {
+        checkpointId: tut1.id,
+        title: "Trailblazer",
+        description: "First checkpoint completed",
+        image: "/icon-trailblazer.png",
+      },
     ]);
 
     // --- Second public hunt (fixed coords) ---
@@ -205,12 +254,7 @@ async function seed() {
       lat: baseLat + 0.0007, lng: baseLng - 0.0001, tolerance: 30,
     });
 
-    // === BADGES for the City Secrets checkpoints ===
-    await Badge.bulkCreate([
-      { checkpointId: cs1.id, title: "Timekeeper", description: "Found the clock.",  image: "/badges/clock.png" },
-      { checkpointId: cs2.id, title: "Sanctuary",  description: "Found the church.", image: "/badges/church.png" },
-      { checkpointId: cs3.id, title: "Merchant",   description: "Found the market.", image: "/badges/market.png" },
-    ]);
+    // (No city-specific badges; we stick to your defined set)
 
     // --- Private hunt (invite-only) ---
     const privateHunt = await Hunt.create({
@@ -225,14 +269,55 @@ async function seed() {
       accessCode: "PRIVATE7",
     });
 
-    await Checkpoint.bulkCreate([
-      { huntId: privateHunt.id, order: 1, title: "Stage Door", riddle: "Knock thrice.",  answer: "knock", lat: baseLat - 0.0002, lng: baseLng + 0.0003, tolerance: 25 },
-      { huntId: privateHunt.id, order: 2, title: "Green Room", riddle: "Color of calm.", answer: "green", lat: baseLat - 0.0003, lng: baseLng + 0.0005, tolerance: 25 },
-    ]);
+    // Existing two checkpoints
+    const p1 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 1,
+      title: "Stage Door", riddle: "Knock thrice.", answer: "knock",
+      lat: baseLat - 0.0002, lng: baseLng + 0.0003, tolerance: 25
+    });
+    const p2 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 2,
+      title: "Green Room", riddle: "Color of calm.", answer: "green",
+      lat: baseLat - 0.0003, lng: baseLng + 0.0005, tolerance: 25
+    });
+
+    // Add placeholder checkpoints so each global badge has a host
+    const p3 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 3,
+      title: "After Hours", riddle: "Night creatures rise.", answer: "owl",
+      lat: baseLat - 0.0004, lng: baseLng + 0.0006, tolerance: 25
+    });
+    const p4 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 4,
+      title: "On a Roll", riddle: "Keep the streak.", answer: "streak",
+      lat: baseLat - 0.0005, lng: baseLng + 0.0007, tolerance: 25
+    });
+    const p5 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 5,
+      title: "Full Run", riddle: "Finish the journey.", answer: "finish",
+      lat: baseLat - 0.0006, lng: baseLng + 0.0008, tolerance: 25
+    });
+    const p6 = await Checkpoint.create({
+      huntId: privateHunt.id, order: 6,
+      title: "Speed Check", riddle: "Beat the clock.", answer: "fast",
+      lat: baseLat - 0.0007, lng: baseLng + 0.0009, tolerance: 25
+    });
 
     if (typeof HuntInvite !== "undefined" && HuntInvite?.create) {
       await HuntInvite.create({ huntId: privateHunt.id, code: "PRIVATE7" });
     }
+
+    // Attach remaining official badges (exactly what you listed)
+    await Badge.bulkCreate([
+      { checkpointId: p1.id, title: "Night Owl",        description: "Completed a hunt between 10PM–6AM",                     image: "/icon-nightowl.png" },
+      { checkpointId: p2.id, title: "Ghost Hunter",     description: "Completed hidden (invite-only) hunt",                    image: "/icon-ghosthunter.png" },
+      { checkpointId: p3.id, title: "Beta Tester",      description: "Participated in the first 10 SideQuest hunts ever",      image: "/icon-betatester.png" },
+      { checkpointId: p4.id, title: "Streak Master",    description: "Completed 3+ hunts in 3 days",                           image: "/icon-streakmaster.png" },
+      { checkpointId: p5.id, title: "Pathfinder",       description: "First full hunt completed",                              image: "/icon-pathfinder.png" },
+      { checkpointId: p6.id, title: "Speedrunner",      description: "Completed hunt under X mins",                            image: "/icon-speedrunner.png" },
+      { checkpointId: tut2.id, title: "Sharp Eye",      description: "Solved all clues with no hints",                         image: "/icon-sharpeye.png" },
+      { checkpointId: tut3.id, title: "Badge Collector",description: "Earned 5+ badges total",                                 image: "/icon-badge-collector.png" },
+    ]);
 
     // --- UserHunt (drives leaderboard fallback) ---
     const uh1 = await UserHunt.create({
@@ -242,7 +327,7 @@ async function seed() {
       completedAt: new Date(Date.now() - 30 * 60 * 1000), // 30m ago
       status: "completed",
       totalTimeSeconds: 30 * 60,
-      totalBadges: 3,
+      totalBadges: 0,
     });
 
     const uh2 = await UserHunt.create({
@@ -252,7 +337,7 @@ async function seed() {
       completedAt: new Date(Date.now() - 40 * 60 * 1000),
       status: "completed",
       totalTimeSeconds: 50 * 60,
-      totalBadges: 3,
+      totalBadges: 0,
     });
 
     const uh3 = await UserHunt.create({
@@ -260,7 +345,7 @@ async function seed() {
       huntId: cityHunt.id,
       startedAt: new Date(Date.now() - 20 * 60 * 1000),
       status: "active",
-      totalBadges: 1,
+      totalBadges: 0,
     });
 
     // --- Attempts history (some wrong then right) ---
@@ -274,101 +359,154 @@ async function seed() {
       {
         userHuntId: uh1.id, checkpointId: cs1.id,
         reachedAt: new Date(Date.now() - 57 * 60 * 1000),
-        riddleAnswer: "clock", wasCorrect: true, badgeEarned: true,
+        riddleAnswer: "clock", wasCorrect: true, badgeEarned: false,
         attemptLat: cs1.lat, attemptLng: cs1.lng,
       },
     ]);
 
-    // === NEW: Seed some earned badges so user_badges isn't empty ===
-    // Pick badges by their checkpoint relationships:
-    const tutorialBadges = await Badge.findAll({
-      where: { checkpointId: { [Op.in]: [tut1.id, tut2.id, tut3.id] } },
-    });
-    const cityBadges = await Badge.findAll({
-      where: { checkpointId: { [Op.in]: [cs1.id, cs2.id, cs3.id] } },
-    });
-
-    // Map helpers: title -> id (in case you want stable references)
+    // === Seed a couple earned badges so user_badges isn't empty ===
+    const allBadges = await Badge.findAll({ attributes: ["id", "title"] });
     const byTitle = (rows) => Object.fromEntries(rows.map(b => [b.title, b.id]));
-
-    const T = byTitle(tutorialBadges);
-    const C = byTitle(cityBadges);
+    const B = byTitle(allBadges);
 
     if (UserBadge?.bulkCreate) {
-      await UserBadge.bulkCreate([
-        // player finished City Secrets → award all three
-        { userId: player.id,  badgeId: C["Timekeeper"], earnedAt: new Date(Date.now() - 57 * 60 * 1000) },
-        { userId: player.id,  badgeId: C["Sanctuary"],  earnedAt: new Date(Date.now() - 45 * 60 * 1000) },
-        { userId: player.id,  badgeId: C["Merchant"],   earnedAt: new Date(Date.now() - 30 * 60 * 1000) },
-
-        // player2 finished City Secrets later
-        { userId: player2.id, badgeId: C["Timekeeper"], earnedAt: new Date(Date.now() - 80 * 60 * 1000) },
-        { userId: player2.id, badgeId: C["Sanctuary"],  earnedAt: new Date(Date.now() - 60 * 60 * 1000) },
-        { userId: player2.id, badgeId: C["Merchant"],   earnedAt: new Date(Date.now() - 40 * 60 * 1000) },
-
-        // player3 started tutorial → earned first badge only
-        { userId: player3.id, badgeId: T["Trailhead"],  earnedAt: new Date(Date.now() - 10 * 60 * 1000) },
-      ], { ignoreDuplicates: true }); // safe if rerun locally
+      await UserBadge.bulkCreate(
+        [
+          // player3 earned Trailblazer (imagine they solved tutorial CP1)
+          { userId: player3.id, badgeId: B["Trailblazer"], earnedAt: new Date(Date.now() - 10 * 60 * 1000) },
+        ],
+        { ignoreDuplicates: true }
+      );
     }
 
-    // --- Optional: prefill LeaderboardEntry if your model is present ---
+    // === Grant ALL badges to THE_icon, baryaakov, Click_Bait; Mohammed gets Night Owl only ===
+    const grantAll = async (userId) => {
+      await UserBadge.bulkCreate(
+        allBadges.map(b => ({ userId, badgeId: b.id })),
+        { ignoreDuplicates: true }
+      );
+    };
+    await grantAll(tAdmin.id);
+    await grantAll(barAdmin.id);
+    await grantAll(smedly.id);
+
+    if (B["Night Owl"]) {
+      await UserBadge.findOrCreate({
+        where: { userId: mohammed.id, badgeId: B["Night Owl"] },
+        defaults: { userId: mohammed.id, badgeId: B["Night Owl"] },
+      });
+    }
+
+    // === Showcase Extras (inside seed, minimal) ===
+    // One more public hunt + progress + badges to make demo lively
+    const campusHunt = await Hunt.create({
+      title: "Campus Trail",
+      description: "A brisk loop across three landmarks.",
+      creatorId: creator.id,
+      isActive: true,
+      isPublished: true,
+      version: 1,
+      visibility: "public",
+      endsAt: new Date(Date.now() + 5 * 24 * 3600 * 1000),
+      maxPlayers: 150,
+      coverUrl: "https://picsum.photos/seed/campus/1200/600",
+      accessCode: generateAccessCode(),
+    });
+
+    const cam1 = await Checkpoint.create({
+      huntId: campusHunt.id, order: 1,
+      title: "Library Steps", riddle: "Where pages turn but feet don’t.",
+      answer: "library", lat: baseLat + 0.00025, lng: baseLng + 0.00035, tolerance: 30
+    });
+    const cam2 = await Checkpoint.create({
+      huntId: campusHunt.id, order: 2,
+      title: "Bell Tower", riddle: "I mark the hours in song.",
+      answer: "tower", lat: baseLat + 0.00055, lng: baseLng + 0.00010, tolerance: 30
+    });
+    const cam3 = await Checkpoint.create({
+      huntId: campusHunt.id, order: 3,
+      title: "Quad Arch", riddle: "Pass through me to learn.",
+      answer: "arch", lat: baseLat + 0.00075, lng: baseLng - 0.00025, tolerance: 30
+    });
+
+    // Helper to grant by title using B
+    async function grant(userId, title, when = new Date()) {
+      if (!B[title]) return;
+      await UserBadge.findOrCreate({
+        where: { userId, badgeId: B[title] },
+        defaults: { userId, badgeId: B[title], earnedAt: when },
+      });
+    }
+
+    // Player finishes 3 hunts on 3 different days (Streak look)
+    const day = 24 * 3600 * 1000;
+
+    // Ensure city secrets completion “today”
+    if (uh1) {
+      uh1.startedAt = new Date(Date.now() - (60 * 60 * 1000));
+      uh1.completedAt = new Date(Date.now() - (30 * 60 * 1000));
+      uh1.totalTimeSeconds = 30 * 60;
+      await uh1.save();
+    }
+
+    // Tutorial completion “yesterday”
+    const tutFinishStart = new Date(Date.now() - (day + 45 * 60 * 1000));
+    const tutFinishEnd   = new Date(Date.now() - (day + 25 * 60 * 1000));
+    const uhTutorial = await UserHunt.create({
+      userId: player.id,
+      huntId: tutorialHunt.id,
+      startedAt: tutFinishStart,
+      completedAt: tutFinishEnd,
+      status: "completed",
+      totalTimeSeconds: Math.floor((tutFinishEnd - tutFinishStart)/1000),
+    });
+
+    // Campus run in 18 minutes (Speedrunner demo)
+    const campusStart = new Date(Date.now() - (22 * 60 * 1000));
+    const campusEnd   = new Date(Date.now() - (4 * 60 * 1000));
+    const uhCampus = await UserHunt.create({
+      userId: player.id,
+      huntId: campusHunt.id,
+      startedAt: campusStart,
+      completedAt: campusEnd,
+      status: "completed",
+      totalTimeSeconds: 18 * 60,
+    });
+
+    // Mid-run progress for player2 on Campus
+    const uhCampusP2 = await UserHunt.create({
+      userId: player2.id,
+      huntId: campusHunt.id,
+      startedAt: new Date(Date.now() - (50 * 60 * 1000)),
+      status: "active",
+    });
+    await UserCheckpointProgress.bulkCreate([
+      { userHuntId: uhCampusP2.id, checkpointId: cam1.id, attemptsCount: 2, solvedAt: new Date(Date.now() - (40 * 60 * 1000)) },
+      { userHuntId: uhCampusP2.id, checkpointId: cam2.id, attemptsCount: 1, solvedAt: null },
+    ]);
+
+    // Leaderboard entries for the new hunt
     if (typeof LeaderboardEntry !== "undefined" && LeaderboardEntry?.bulkCreate) {
       await LeaderboardEntry.bulkCreate([
-        {
-          huntId: cityHunt.id,
-          userId: player.id,
-          completionTime: 30 * 60,
-          completionDate: new Date(Date.now() - 30 * 60 * 1000),
-        },
-        {
-          huntId: cityHunt.id,
-          userId: player2.id,
-          completionTime: 50 * 60,
-          completionDate: new Date(Date.now() - 40 * 60 * 1000),
-        },
+        { huntId: campusHunt.id, userId: player.id,  completionTime: 18 * 60, completionDate: campusEnd },
+        { huntId: campusHunt.id, userId: player2.id, completionTime: null,     completionDate: null },
       ]);
     }
 
-    // --- Friends / Notifications / Feedback / Admins (light touch) ---
-    if (typeof Friend !== "undefined" && Friend?.create) {
-      // Accepted friendship: Player ↔ Player2
-      await Friend.create({
-        requesterId: player.id,
-        receiverId: player2.id,
-        status: "accepted",
-      });
+    // Showcase earned badges
+    await grant(player.id, "Trailblazer", tutFinishEnd);
+    await grant(player.id, "Pathfinder",  campusEnd);
+    await grant(player.id, "Speedrunner", campusEnd);
+    await grant(player.id, "Streak Master", new Date());
 
-      // Pending request: Player3 → Player
-      await Friend.create({
-        requesterId: player3.id,
-        receiverId: player.id,
-        status: "pending",
-      });
+    await grant(player2.id, "Trailblazer", new Date(Date.now() - (40 * 60 * 1000)));
 
-      // Rejected request: Player2 → Player3
-      await Friend.create({
-        requesterId: player2.id,
-        receiverId: player3.id,
-        status: "rejected",
-      });
-    }
-
+    // Activity notifications
     if (typeof Notification !== "undefined" && Notification?.bulkCreate) {
       await Notification.bulkCreate([
-        { userId: player.id,  message: "You earned Trailhead!", type: "badge" },
-        { userId: player2.id, message: "player1 invited you to a hunt.", type: "invite" },
+        { userId: player.id,  message: "Speedrunner unlocked on Campus Trail!", type: "badge" },
+        { userId: player2.id, message: "Checkpoint solved on Campus Trail",     type: "progress" },
       ]);
-    }
-
-    if (typeof HuntFeedback !== "undefined" && HuntFeedback?.create) {
-      await HuntFeedback.create({
-        huntId: cityHunt.id, userId: player.id,
-        rating: 5, comments: "Loved it! Great clues.",
-      });
-    }
-
-    if (typeof HuntAdmin !== "undefined" && HuntAdmin?.create) {
-      await HuntAdmin.create({ huntId: cityHunt.id, userId: creator.id, assignedBy: admin.id });
     }
 
     // --- Logs ---
@@ -376,6 +514,7 @@ async function seed() {
     console.log(`   Tutorial Hunt ID: ${tutorialHunt.id}  Access Code: ${tutorialHunt.accessCode}`);
     console.log(`   City Secrets Hunt ID: ${cityHunt.id}  Access Code: ${cityHunt.accessCode}`);
     console.log(`   Private Hunt ID: ${privateHunt.id}  Access Code: ${privateHunt.accessCode}`);
+    console.log(`   Campus Trail Hunt ID: ${campusHunt.id}  Access Code: ${campusHunt.accessCode}`);
     console.log(`   Tutorial Start @ lat=${cp1LL.lat.toFixed(6)}, lng=${cp1LL.lng.toFixed(6)}`);
   } catch (err) {
     console.error("❌ Seed error:", err);
