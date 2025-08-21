@@ -3,7 +3,8 @@ const router = express.Router();
 const { sequelize, Hunt, Checkpoint, UserHunt } = require("../database");
 const { Op } = require("sequelize"); // added for simple date filters
 // Just incase we want the hunt routes to require auth later:
-// const { requireAuth } = require("../middleware/authMiddleware");
+// UPDATE: Uncommenting because front requires auth to set userHuntId
+const { requireAuth } = require("../middleware/authMiddleware");
 
 function generateAccessCode(len = 6) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -216,8 +217,9 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/hunts/join
+// UPDATE: Adding requireAuth for userHuntId
 // Join a hunt by a code (invite or public access code)
-router.post("/join", async (req, res) => {
+router.post("/join", requireAuth, async (req, res) => {
   try {
     const code = String(req.body?.joinCode || "").trim().toUpperCase();
     if (!code) return res.status(400).json({ error: "joinCode is required" });
@@ -259,8 +261,9 @@ router.post("/join", async (req, res) => {
 
 
 // POST /api/hunts/:idOrSlug/join
+// UPDATE: Uncommenting requireAuth to allow userHuntId to be made
 // Direct-join by either numeric id OR slug in one endpoint. Returns userHuntId (if logged in) and first checkpoint to start
-router.post("/:idOrSlug/join", /* requireAuth, */ async (req, res) => {
+router.post("/:idOrSlug/join", requireAuth, async (req, res) => {
   try {
     const idOrSlug = String(req.params.idOrSlug || "").trim().toLowerCase();
     if (!idOrSlug) return res.status(400).json({ error: "Invalid id or slug" });
