@@ -45,6 +45,72 @@ async function getNextCheckpointId(currentCp, t) {
   return next ? next.id : null;
 }
 
+/* ============================================================================
+   GET /api/play/checkpoints/:checkpointId
+   Returns lightweight checkpoint info for the Play page (NO answer).
+   Requires that the user has joined the hunt (UserHunt exists).
+   ========================================================================== */
+router.get("/checkpoints/:checkpointId", requireAuth, async (req, res) => {
+  const { checkpointId } = req.params;
+  const cpId = Number(checkpointId);
+  if (!Number.isInteger(cpId) || cpId <= 0) {
+    return res.status(400).json({ error: "Invalid checkpointId" });
+  }
+
+  try {
+    const cp = await Checkpoint.findByPk(cpId, {
+      attributes: [
+        "id",
+        "title",
+        "riddle",
+        "lat",
+        "lng",
+        "tolerance",        // keep both names in case your model uses one or the other
+        "toleranceRadius",  // tolerate either; frontend can prefer toleranceRadius || tolerance
+        "order",            // often used for sequence
+        "sequenceIndex"     // or this, if present in your schema
+      ],
+    });
+
+    if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
+
+    // Ensure the player has joined this hunt (or is creator/admin via separate logic you may add later)
+    const userId = req.user?.id || req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const hasJoin = await UserHunt.findOne({
+      where: { userId, huntId: cp.huntId },
+    });
+    if (!hasJoin) {
+      return res
+        .status(403)
+        .json({ error: "Join this hunt from the hunt page first" });
+    }
+
+    // Do NOT include the answer here.
+    return res.json({
+      checkpoint: {
+        id: cp.id,
+        title: cp.title,
+        riddle: cp.riddle,
+        lat: cp.lat,
+        lng: cp.lng,
+        toleranceRadius: cp.toleranceRadius ?? cp.tolerance ?? null,
+        sequenceIndex: cp.sequenceIndex ?? cp.order ?? null,
+        huntId: cp.huntId,
+      },
+    });
+  } catch (e) {
+    console.error("load checkpoint failed", e);
+    return res.status(500).json({ error: "Failed to load checkpoint" });
+  }
+});
+
+/* ============================================================================
+   POST /api/play/checkpoints/:checkpointId/attempt
+   Submit a riddle answer (+ optional lat/lng), update progress, grant badges,
+   and return next checkpoint id if correct.
+   ========================================================================== */
 router.post(
   "/checkpoints/:checkpointId/attempt",
   requireAuth,
@@ -172,7 +238,7 @@ router.post(
           }
           await uh.save({ transaction: t });
 
-          // ===== Derived badge grants (non-blocking, core 3 only) =====
+          // Derived badge grants (non-blocking, core 3 only) 
           try {
             const userId = uh.userId;
 
