@@ -55,9 +55,7 @@ async function getNextCheckpointId(currentCp, t) {
 /* ============================================================================
    GET /api/play/checkpoints/:checkpointId
    Returns lightweight checkpoint info for the Play page (NO answer).
-   Requires that the user has joined the hunt (UserHunt exists).
    ========================================================================== */
-
 router.get("/checkpoints/:checkpointId", async (req, res) => {
   const { checkpointId } = req.params;
   const cpId = Number(checkpointId);
@@ -66,15 +64,12 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
   }
 
   try {
-    const cp = await Checkpoint.findByPk(cpId); // <-- no attributes array
+    const cp = await Checkpoint.findByPk(cpId);
     if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
 
-    // Read safely from either camelCase or snake_case depending on your model/DB mapping
     const row = cp.toJSON ? cp.toJSON() : cp;
-
     const toleranceRadius =
       row.toleranceRadius ?? row.tolerance ?? row.tolerance_radius ?? null;
-
     const sequenceIndex =
       row.sequenceIndex ?? row.order ?? row.sequence_index ?? null;
 
@@ -91,7 +86,6 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
       },
     });
   } catch (e) {
-    // Helpful diagnostics in logs, but keep client message generic
     console.error("[play:getCheckpoint] failed", {
       checkpointId: cpId,
       name: e?.name,
@@ -105,16 +99,13 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
 
 /* ============================================================================
    POST /api/play/checkpoints/:checkpointId/anchor
-   Anchor a checkpoint's coordinates once (tutorial start).
-   Preconditions: must be logged in and joined to the hunt (userHuntId).
-   Only allowed for first checkpoint (order/sequenceIndex === 1).
-   Idempotent: if coords are already set, returns existing coords.
-   Optionally: derive CP2/CP3 relative to CP1 the first time CP1 is anchored.
+   Anchor (or re-anchor) Tutorial CP1 to the player's current GPS.
+   Updates if coords are missing OR distance > THRESHOLD OR force===true.
+   Idempotent otherwise. Also nudges CP2/CP3 once if unset (tutorial convenience).
    ========================================================================== */
-
 router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) => {
   const { checkpointId } = req.params;
-  const { lat, lng, userHuntId } = req.body || {};
+  const { lat, lng, userHuntId, force } = req.body || {};
   const cpId = Number(checkpointId);
 
   if (!Number.isFinite(cpId) || cpId <= 0) {
@@ -125,6 +116,8 @@ router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) =
   }
   if (!userHuntId) return res.status(400).json({ error: "userHuntId required" });
 
+  const THRESHOLD = 500; // meters – re-anchor if old CP1 is farther than this from the player's GPS
+
   const t = await sequelize.transaction();
   try {
     const cp1 = await Checkpoint.findByPk(cpId, { transaction: t, lock: t.LOCK.UPDATE });
@@ -133,7 +126,7 @@ router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) =
       return res.status(404).json({ error: "Checkpoint not found" });
     }
 
-    // Gate: only first checkpoint by sequence/order
+    // Only allow first checkpoint (order/sequenceIndex === 1)
     const isFirst = (cp1.sequenceIndex ?? cp1.order ?? 0) === 1;
     if (!isFirst) {
       await t.rollback();
@@ -147,12 +140,19 @@ router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) =
       return res.status(403).json({ error: "Not joined to this hunt" });
     }
 
-    // If already set, no-op
-    const already =
-      Number.isFinite(cp1.lat) && Number.isFinite(cp1.lng) &&
-      (Math.abs(cp1.lat) > 1e-6 || Math.abs(cp1.lng) > 1e-6);
+    const hadCoords =
+      Number.isFinite(cp1.lat) && Number.isFinite(cp1.lng);
+    const prev = hadCoords ? { lat: cp1.lat, lng: cp1.lng } : null;
 
-    if (!already) {
+    let shouldUpdate = !hadCoords || Boolean(force);
+    if (!shouldUpdate && hadCoords) {
+      const d = metersBetween(Number(lat), Number(lng), cp1.lat, cp1.lng);
+      if (Number.isFinite(d) && d > THRESHOLD) {
+        shouldUpdate = true;
+      }
+    }
+
+    if (shouldUpdate) {
       cp1.lat = Number(lat);
       cp1.lng = Number(lng);
       await cp1.save({ transaction: t });
@@ -171,11 +171,22 @@ router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) =
         const o3 = offsetMeters(cp1.lat, cp1.lng, 240, -220); // ~330m NW
         cp3.lat = o3.lat; cp3.lng = o3.lng; await cp3.save({ transaction: t });
       }
+
+      await t.commit();
+      return res.json({
+        ok: true,
+        updated: true,
+        previous: prev,
+        checkpoint: { id: cp1.id, lat: cp1.lat, lng: cp1.lng },
+      });
     }
 
+    // No update performed
     await t.commit();
     return res.json({
       ok: true,
+      updated: false,
+      previous: prev,
       checkpoint: { id: cp1.id, lat: cp1.lat, lng: cp1.lng },
     });
   } catch (e) {
@@ -263,13 +274,10 @@ router.post(
           .json({ error: "Attempt limit reached for this checkpoint" });
       }
 
-      // Evaluate correctness (swap to hash compare later)
+      // Evaluate correctness
       const wasCorrect = norm(answer) === norm(cp.answer);
 
-      /*
-       Geofence check (enabled):
-       Requires cp.lat/lng and tolerance (either toleranceRadius or tolerance) plus attempt lat/lng.
-      */
+      // Geofence check (enabled)
       if (
         cp.lat != null &&
         cp.lng != null &&
@@ -277,7 +285,7 @@ router.post(
         lat != null &&
         lng != null
       ) {
-        const tol = cp.toleranceRadius ?? cp.tolerance;
+        const tol = Number(cp.toleranceRadius ?? cp.tolerance);
         const dist = metersBetween(Number(lat), Number(lng), cp.lat, cp.lng);
         if (Number.isFinite(dist) && Number.isFinite(tol) && dist > tol) {
           await t.rollback();
@@ -295,7 +303,7 @@ router.post(
           userHuntId: uh.id,
           checkpointId: cp.id,
           riddleAnswer: String(answer),
-          wasCorrect, // JScript Object Shorthand doesn't need key and value repeated if they're the same name
+          wasCorrect,
           attemptLat: lat ?? null,
           attemptLng: lng ?? null,
         },
@@ -318,7 +326,6 @@ router.post(
         if (!nextCheckpointId) {
           uh.status = "completed";
           uh.completedAt = new Date();
-          // compute simple total seconds if startedAt exists
           if (uh.startedAt) {
             uh.totalTimeSeconds = Math.max(
               0,
@@ -329,11 +336,10 @@ router.post(
           }
           await uh.save({ transaction: t });
 
-          // Derived badge grants (non-blocking, core 3 only) 
+          // Derived badge grants (non-blocking, core 3 only)
           try {
             const userId = uh.userId;
 
-            // Pathfinder: first full hunt completed
             const pf = await Badge.findOne({ where: { title: "Pathfinder" }, transaction: t });
             if (pf) {
               await UserBadge.findOrCreate({
@@ -343,7 +349,6 @@ router.post(
               });
             }
 
-            // Speedrunner: completed under X mins (adjust threshold)
             const SPEEDRUN_SECS = 30 * 60;
             if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
               const sr = await Badge.findOne({ where: { title: "Speedrunner" }, transaction: t });
@@ -356,7 +361,6 @@ router.post(
               }
             }
 
-            // Badge Collector: earned 5+ badges total
             const count = await UserBadge.count({ where: { userId }, transaction: t });
             if (count >= 5) {
               const bc = await Badge.findOne({ where: { title: "Badge Collector" }, transaction: t });
@@ -368,42 +372,9 @@ router.post(
                 });
               }
             }
-
-            // Sharp Eye intentionally omitted here until "no hints" tracking is wired.
           } catch (e) {
             console.warn("Derived badge grant failed (non-blocking):", e?.message || e);
           }
-        }
-      }
-
-      // Badge granting (only when correct)
-      let grantedBadge = null;
-      if (wasCorrect) {
-        try {
-          const userId = await resolveUserId(req, userHuntId, t);
-          if (userId) {
-            const badge = await Badge.findOne({
-              where: { checkpointId: cp.id },
-              transaction: t,
-            });
-            if (badge) {
-              const [userBadge, created] = await UserBadge.findOrCreate({
-                where: { userId, badgeId: badge.id },
-                defaults: { userId, badgeId: badge.id, earnedAt: new Date() },
-                transaction: t,
-              });
-              grantedBadge = {
-                id: badge.id,
-                title: badge.title,
-                image: badge.image,
-                description: badge.description || null,
-                newlyEarned: created,
-              };
-            }
-          }
-        } catch (e) {
-          // Non-blocking: badge grant should not break the core play loop
-          console.warn("Badge grant failed (non-blocking):", e?.message || e);
         }
       }
 
@@ -417,7 +388,7 @@ router.post(
           : null,
         nextCheckpointId,
         finished: wasCorrect && !nextCheckpointId,
-        badge: grantedBadge || null,
+        badge: null,
       });
     } catch (err) {
       await t.rollback();
