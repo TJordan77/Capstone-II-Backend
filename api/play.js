@@ -50,7 +50,8 @@ async function getNextCheckpointId(currentCp, t) {
    Returns lightweight checkpoint info for the Play page (NO answer).
    Requires that the user has joined the hunt (UserHunt exists).
    ========================================================================== */
-router.get("/checkpoints/:checkpointId", requireAuth, async (req, res) => {
+
+router.get("/checkpoints/:checkpointId", async (req, res) => {
   const { checkpointId } = req.params;
   const cpId = Number(checkpointId);
   if (!Number.isInteger(cpId) || cpId <= 0) {
@@ -62,32 +63,20 @@ router.get("/checkpoints/:checkpointId", requireAuth, async (req, res) => {
       attributes: [
         "id",
         "title",
+        "huntId",
         "riddle",
         "lat",
         "lng",
-        "tolerance",        // keep both names in case your model uses one or the other
+        "tolerance",        // keep both names in case the model uses one or the other
         "toleranceRadius",  // tolerate either; frontend can prefer toleranceRadius || tolerance
         "order",            // often used for sequence
-        "sequenceIndex"     // or this, if present in your schema
+        "sequenceIndex"     // or this, if present in the schema
       ],
     });
 
     if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
 
-    // Ensure the player has joined this hunt (or is creator/admin via separate logic you may add later)
-    const userId = req.user?.id || req.user?.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
-    const hasJoin = await UserHunt.findOne({
-      where: { userId, huntId: cp.huntId },
-    });
-    if (!hasJoin) {
-      return res
-        .status(403)
-        .json({ error: "Join this hunt from the hunt page first" });
-    }
-
-    // Do NOT include the answer here.
+    // Making sure the answer isnt included here
     return res.json({
       checkpoint: {
         id: cp.id,
