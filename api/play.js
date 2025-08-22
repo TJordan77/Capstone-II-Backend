@@ -59,6 +59,53 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
   }
 
   try {
+    const cp = await Checkpoint.findByPk(cpId); // <-- no attributes array
+    if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
+
+    // Read safely from either camelCase or snake_case depending on your model/DB mapping
+    const row = cp.toJSON ? cp.toJSON() : cp;
+
+    const toleranceRadius =
+      row.toleranceRadius ?? row.tolerance ?? row.tolerance_radius ?? null;
+
+    const sequenceIndex =
+      row.sequenceIndex ?? row.order ?? row.sequence_index ?? null;
+
+    return res.json({
+      checkpoint: {
+        id: row.id,
+        title: row.title,
+        riddle: row.riddle,
+        lat: row.lat,
+        lng: row.lng,
+        toleranceRadius,
+        sequenceIndex,
+        huntId: row.huntId ?? row.hunt_id ?? null,
+      },
+    });
+  } catch (e) {
+    // Helpful diagnostics in logs, but keep client message generic
+    console.error("[play:getCheckpoint] failed", {
+      checkpointId: cpId,
+      name: e?.name,
+      message: e?.message,
+      sql: e?.parent?.sql,
+      sqlMessage: e?.parent?.message,
+    });
+    return res.status(500).json({ error: "Failed to load checkpoint" });
+  }
+});
+
+
+/* Testing something
+router.get("/checkpoints/:checkpointId", async (req, res) => {
+  const { checkpointId } = req.params;
+  const cpId = Number(checkpointId);
+  if (!Number.isInteger(cpId) || cpId <= 0) {
+    return res.status(400).json({ error: "Invalid checkpointId" });
+  }
+
+  try {
     const cp = await Checkpoint.findByPk(cpId, {
       attributes: [
         "id",
@@ -94,6 +141,7 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
     return res.status(500).json({ error: "Failed to load checkpoint" });
   }
 });
+*/
 
 /* ============================================================================
    POST /api/play/checkpoints/:checkpointId/attempt
