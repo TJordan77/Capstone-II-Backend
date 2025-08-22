@@ -24,6 +24,13 @@ function metersBetween(lat1, lng1, lat2, lng2) {
   return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
+// Simple meter offsets: (northMeters, eastMeters) from a base lat/lng
+function offsetMeters(lat, lng, northMeters, eastMeters) {
+  const dLat = northMeters / 111111; // meters per degree latitude
+  const dLng = eastMeters / (111111 * Math.cos((lat * Math.PI) / 180));
+  return { lat: lat + dLat, lng: lng + dLng };
+}
+
 // Resolve a userId from req or, if missing, via the UserHunt row (keeps attempts playable for logged-in users)
 async function resolveUserId(req, userHuntId, t) {
   const uid = req.user?.id || req.user?.userId;
@@ -96,52 +103,87 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
   }
 });
 
+/* ============================================================================
+   POST /api/play/checkpoints/:checkpointId/anchor
+   Anchor a checkpoint's coordinates once (tutorial start).
+   Preconditions: must be logged in and joined to the hunt (userHuntId).
+   Only allowed for first checkpoint (order/sequenceIndex === 1).
+   Idempotent: if coords are already set, returns existing coords.
+   Optionally: derive CP2/CP3 relative to CP1 the first time CP1 is anchored.
+   ========================================================================== */
 
-/* Testing something
-router.get("/checkpoints/:checkpointId", async (req, res) => {
+router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) => {
   const { checkpointId } = req.params;
+  const { lat, lng, userHuntId } = req.body || {};
   const cpId = Number(checkpointId);
-  if (!Number.isInteger(cpId) || cpId <= 0) {
+
+  if (!Number.isFinite(cpId) || cpId <= 0) {
     return res.status(400).json({ error: "Invalid checkpointId" });
   }
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "lat/lng required" });
+  }
+  if (!userHuntId) return res.status(400).json({ error: "userHuntId required" });
 
+  const t = await sequelize.transaction();
   try {
-    const cp = await Checkpoint.findByPk(cpId, {
-      attributes: [
-        "id",
-        "title",
-        "huntId",
-        "riddle",
-        "lat",
-        "lng",
-        "tolerance",        // keep both names in case the model uses one or the other
-        "toleranceRadius",  // tolerate either; frontend can prefer toleranceRadius || tolerance
-        "order",            // often used for sequence
-        "sequenceIndex"     // or this, if present in the schema
-      ],
-    });
+    const cp1 = await Checkpoint.findByPk(cpId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!cp1) {
+      await t.rollback();
+      return res.status(404).json({ error: "Checkpoint not found" });
+    }
 
-    if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
+    // Gate: only first checkpoint by sequence/order
+    const isFirst = (cp1.sequenceIndex ?? cp1.order ?? 0) === 1;
+    if (!isFirst) {
+      await t.rollback();
+      return res.status(400).json({ error: "Only first checkpoint can anchor" });
+    }
 
-    // Making sure the answer isnt included here
+    // Ensure the user is joined to this hunt
+    const uh = await UserHunt.findByPk(userHuntId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!uh || uh.huntId !== cp1.huntId) {
+      await t.rollback();
+      return res.status(403).json({ error: "Not joined to this hunt" });
+    }
+
+    // If already set, no-op
+    const already =
+      Number.isFinite(cp1.lat) && Number.isFinite(cp1.lng) &&
+      (Math.abs(cp1.lat) > 1e-6 || Math.abs(cp1.lng) > 1e-6);
+
+    if (!already) {
+      cp1.lat = Number(lat);
+      cp1.lng = Number(lng);
+      await cp1.save({ transaction: t });
+
+      // OPTIONAL: set CP2/CP3 relative to CP1 if still unset (tutorial convenience)
+      const [cp2, cp3] = await Promise.all([
+        Checkpoint.findOne({ where: { huntId: cp1.huntId, order: 2 }, transaction: t, lock: t.LOCK.UPDATE }),
+        Checkpoint.findOne({ where: { huntId: cp1.huntId, order: 3 }, transaction: t, lock: t.LOCK.UPDATE }),
+      ]);
+
+      if (cp2 && !(Number.isFinite(cp2.lat) && Number.isFinite(cp2.lng))) {
+        const o2 = offsetMeters(cp1.lat, cp1.lng, 150, 120); // ~190m NE
+        cp2.lat = o2.lat; cp2.lng = o2.lng; await cp2.save({ transaction: t });
+      }
+      if (cp3 && !(Number.isFinite(cp3.lat) && Number.isFinite(cp3.lng))) {
+        const o3 = offsetMeters(cp1.lat, cp1.lng, 240, -220); // ~330m NW
+        cp3.lat = o3.lat; cp3.lng = o3.lng; await cp3.save({ transaction: t });
+      }
+    }
+
+    await t.commit();
     return res.json({
-      checkpoint: {
-        id: cp.id,
-        title: cp.title,
-        riddle: cp.riddle,
-        lat: cp.lat,
-        lng: cp.lng,
-        toleranceRadius: cp.toleranceRadius ?? cp.tolerance ?? null,
-        sequenceIndex: cp.sequenceIndex ?? cp.order ?? null,
-        huntId: cp.huntId,
-      },
+      ok: true,
+      checkpoint: { id: cp1.id, lat: cp1.lat, lng: cp1.lng },
     });
   } catch (e) {
-    console.error("load checkpoint failed", e);
-    return res.status(500).json({ error: "Failed to load checkpoint" });
+    await t.rollback();
+    console.error("[play:anchor] failed", e);
+    return res.status(500).json({ error: "Failed to anchor checkpoint(s)" });
   }
 });
-*/
 
 /* ============================================================================
    POST /api/play/checkpoints/:checkpointId/attempt
@@ -225,15 +267,27 @@ router.post(
       const wasCorrect = norm(answer) === norm(cp.answer);
 
       /*
-     Optional geofence check (disabled by default; wire cp.tolerance if needed)
-     if (cp.lat != null && cp.lng != null && cp.tolerance != null && lat != null && lng != null) {
-       const dist = metersBetween(Number(lat), Number(lng), cp.lat, cp.lng);
-       if (dist > cp.tolerance) {
-         await t.rollback();
-         return res.status(403).json({ error: "You are too far from the checkpoint" });
-       }
-     }
-    */
+       Geofence check (enabled):
+       Requires cp.lat/lng and tolerance (either toleranceRadius or tolerance) plus attempt lat/lng.
+      */
+      if (
+        cp.lat != null &&
+        cp.lng != null &&
+        (cp.toleranceRadius != null || cp.tolerance != null) &&
+        lat != null &&
+        lng != null
+      ) {
+        const tol = cp.toleranceRadius ?? cp.tolerance;
+        const dist = metersBetween(Number(lat), Number(lng), cp.lat, cp.lng);
+        if (Number.isFinite(dist) && Number.isFinite(tol) && dist > tol) {
+          await t.rollback();
+          return res.status(403).json({
+            error: `You are too far from the checkpoint (distance ${Math.round(
+              dist
+            )}m, must be within ${tol}m)`,
+          });
+        }
+      }
 
       // Record attempt
       await CheckpointAttempt.create(
