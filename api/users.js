@@ -23,7 +23,6 @@ const { requireAuth } = require("../middleware/authMiddleware");
      - GET /api/hunts/users/:id/hunts/joined
 */
 // (In this file we mount at /api/users, so the effective paths are /api/users/me, etc.)
-
 // small shapers kept local
 function pickUser(u) {
   return {
@@ -58,7 +57,7 @@ function pickBadge(b, earnedAt) {
 }
 
 // GET /users/me
-router.get("/me", requireAuth, async (req, res) => { // <-- protected
+router.get("/me", requireAuth, async (req, res) => {
   try {
     const userId = req.user?.id || req.user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -93,8 +92,8 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     // Read from the join table, then fetch the Badge rows explicitly.
     const links = await UserBadge.findAll({
       where: { userId: id },
-      attributes: ["badgeId", "createdAt"],
-      order: [["createdAt", "DESC"]],
+      attributes: ["badgeId", "earnedAt"], // FIX: use earnedAt, not createdAt
+      order: [["earnedAt", "DESC"]],
     });
 
     if (!links.length) return res.json([]);
@@ -103,7 +102,7 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     const badges = await Badge.findAll({ where: { id: badgeIds } });
 
     // Index earnedAt from links by badgeId
-    const earnedAtById = new Map(links.map((l) => [l.badgeId, l.createdAt]));
+    const earnedAtById = new Map(links.map((l) => [l.badgeId, l.earnedAt]));
 
     const shaped = badges.map((b) => pickBadge(b, earnedAtById.get(b.id)));
     res.json(shaped);
@@ -135,7 +134,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
-    // remove include alias to avoid "Association with alias 'hunt' does not exist"
+    // This version avoids alias issues and stays robust
     const joins = await UserHunt.findAll({
       where: { userId: id },
       order: [["createdAt", "DESC"]],
@@ -143,11 +142,9 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
 
     const results = [];
     for (const j of joins) {
-      // fetch Hunt by foreign key directly to avoid alias issues
       const h = await Hunt.findByPk(j.huntId);
       if (!h) continue;
 
-      // UserCheckpointProgress uses userHuntId (not userId/huntId)
       const solved = await UserCheckpointProgress.count({
         where: { userHuntId: j.id, solvedAt: { [Op.ne]: null } },
       });
@@ -167,7 +164,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   }
 });
 
-// GET /api/users/:id/overview - Added in to help playerdashboard
+// GET /api/users/:id/overview
 router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
@@ -177,7 +174,6 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
       UserBadge.findAll({ where: { userId: id }, attributes: ["id"] }),
       UserHunt.findAll({
         where: { userId: id },
-        // keep this simple and robust too
         order: [["createdAt", "DESC"]],
       }),
     ]);
