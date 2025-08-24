@@ -17,7 +17,7 @@ const Media = require("./media");
 const KioskSession = require("./kioskSession");
 const HuntAdmin = require("./huntAdmin");
 const AuditLog = require("./auditLog");
-const UserCheckpointProgress = require("./userCheckpointProgress");  
+const UserCheckpointProgress = require("./userCheckpointProgress");
 
 // Hunt.creator -> User
 Hunt.belongsTo(User, {
@@ -54,6 +54,24 @@ Hunt.belongsToMany(User, {
   foreignKey: { name: "huntId", field: "hunt_id" },
   otherKey: { name: "userId", field: "user_id" },
   as: "players",
+});
+
+/* Bridge associations so includes like { as: "hunt" } and { as: "user" } work */
+UserHunt.belongsTo(User, {
+  as: "user",
+  foreignKey: { name: "userId", field: "user_id" },
+});
+User.hasMany(UserHunt, {
+  as: "userHunts",
+  foreignKey: { name: "userId", field: "user_id" },
+});
+UserHunt.belongsTo(Hunt, {
+  as: "hunt",
+  foreignKey: { name: "huntId", field: "hunt_id" },
+});
+Hunt.hasMany(UserHunt, {
+  as: "userHunts",
+  foreignKey: { name: "huntId", field: "hunt_id" },
 });
 
 // Checkpoints belong to Hunts
@@ -93,11 +111,23 @@ Badge.belongsToMany(User, {
 });
 
 // Direct refs from the join table (needed for includes using `as: "badge"`)
+/* 🔧 SMALL EDIT: add `as: "user"` so includes can use that alias */
 UserBadge.belongsTo(User, {
+  as: "user",
   foreignKey: { name: "userId", field: "user_id" },
 });
 UserBadge.belongsTo(Badge, {
   as: "badge",
+  foreignKey: { name: "badgeId", field: "badge_id" },
+});
+
+/* optional but handy reverse hasManys for joins */
+User.hasMany(UserBadge, {
+  as: "userBadges",
+  foreignKey: { name: "userId", field: "user_id" },
+});
+Badge.hasMany(UserBadge, {
+  as: "userBadges",
   foreignKey: { name: "badgeId", field: "badge_id" },
 });
 
