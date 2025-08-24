@@ -125,7 +125,14 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
   try {
     // First try via association include (if the association alias exists)
     const user = await User.findByPk(userId, {
-      include: [{ model: Badge, as: "badges", through: { attributes: ["createdAt"] } }],
+      include: [
+        {
+          model: Badge,
+          as: "badges",
+          // IMPORTANT: your join model has `earnedAt` (timestamps: false)
+          through: { attributes: ["earnedAt"] },
+        },
+      ],
       attributes: ["id"],
     });
 
@@ -135,7 +142,7 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
       const badges = user.badges.map((b) => ({
         ...pickBadge(b),
         // prefer the join-table timestamp if available
-        earnedAt: b.UserBadge?.createdAt || b.createdAt,
+        earnedAt: b.UserBadge?.earnedAt || null,
       }));
       shaped = badges;
     }
@@ -144,20 +151,20 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
     if (!shaped) {
       const links = await UserBadge.findAll({
         where: { userId },
-        attributes: ["badgeId", "createdAt"],
-        order: [["createdAt", "DESC"]],
+        attributes: ["badgeId", "earnedAt"],
+        order: [["earnedAt", "DESC"]],
       });
 
       if (!links.length) return res.json([]);
 
       const badgeIds = [...new Set(links.map((l) => l.badgeId))];
-      const earnedAtById = new Map(links.map((l) => [l.badgeId, l.createdAt]));
+      const earnedAtById = new Map(links.map((l) => [l.badgeId, l.earnedAt]));
 
       const badges = await Badge.findAll({ where: { id: badgeIds } });
 
       shaped = badges.map((b) => ({
         ...pickBadge(b),
-        earnedAt: earnedAtById.get(b.id),
+        earnedAt: earnedAtById.get(b.id) || null,
       }));
     }
 
@@ -297,13 +304,20 @@ router.post("/grant", /* requireAuth, */ async (req, res) => {
 
     const [row, created] = await UserBadge.findOrCreate({
       where: { userId, badgeId },
-      defaults: { userId, badgeId },
+      // ensure we actually set the timestamp (no createdAt when timestamps:false)
+      defaults: { userId, badgeId, earnedAt: new Date() },
     });
+
+    // If it already existed and earnedAt is null for some reason, backfill it
+    if (!created && !row.earnedAt) {
+      row.earnedAt = new Date();
+      await row.save();
+    }
 
     // Return the badge details with earnedAt timestamp
     const payload = {
       ...pickBadge(badge),
-      earnedAt: row.createdAt,
+      earnedAt: row.earnedAt,
       newlyGranted: !!created,
     };
 
