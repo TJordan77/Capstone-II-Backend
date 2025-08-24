@@ -58,6 +58,20 @@ function pickBadge(b, earnedAt) {
   };
 }
 
+// Small helper to decide if we should fall back to an empty array (avoid noisy 500s on prod)
+function isBenignSequelizeError(err) {
+  const msg = err?.message || err?.name || "";
+  const parentMsg = err?.parent?.message || "";
+  // Eager loading alias issues / missing relations / unknown columns (Neon/Vercel cold schema)
+  return (
+    /EagerLoadingError/i.test(msg) ||
+    /relation .* does not exist/i.test(parentMsg) ||
+    /column .* does not exist/i.test(parentMsg) ||
+    /SQLITE_ERROR: no such table/i.test(parentMsg) ||
+    /Unknown column/i.test(parentMsg)
+  );
+}
+
 // GET /users/me
 router.get("/me", /* requireAuth, */ async (req, res) => { // <-- protected
   try {
@@ -71,6 +85,7 @@ router.get("/me", /* requireAuth, */ async (req, res) => { // <-- protected
       if (!secret) throw new Error("JWT_SECRET missing");
       payload = jwt.verify(token, secret);
     } catch (e) {
+      console.error("JWT verify failed for /users/me:", e?.message || e);
       return res.status(403).json({ error: "Invalid or expired token" });
     }
 
@@ -82,7 +97,11 @@ router.get("/me", /* requireAuth, */ async (req, res) => { // <-- protected
 
     res.json(pickUser(me));
   } catch (e) {
-    console.error("GET /api/users/me failed:", e);
+    console.error("GET /api/users/me failed:", {
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load profile" });
   }
 });
@@ -96,7 +115,12 @@ router.get("/:id", /* requireAuth, */ async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(pickUser(user));
   } catch (e) {
-    console.error("GET /api/users/:id failed:", e);
+    console.error("GET /api/users/:id failed:", {
+      id,
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load user" });
   }
 });
@@ -127,7 +151,16 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     const shaped = badges.map((b) => pickBadge(b, earnedAtById.get(b.id)));
     res.json(shaped);
   } catch (e) {
-    console.error("GET /api/users/:id/badges failed:", e);
+    if (isBenignSequelizeError(e)) {
+      console.warn("GET /api/users/:id/badges benign error; returning []", e?.message || e);
+      return res.json([]); // <-- avoid 500 for display-only route
+    }
+    console.error("GET /api/users/:id/badges failed:", {
+      id,
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load badges" });
   }
 });
@@ -143,7 +176,12 @@ router.get("/:id/hunts/created", /* requireAuth, */ async (req, res) => {
     });
     res.json(hunts.map(pickHunt));
   } catch (e) {
-    console.error("GET /api/users/:id/hunts/created failed:", e);
+    console.error("GET /api/users/:id/hunts/created failed:", {
+      id,
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load created hunts" });
   }
 });
@@ -154,6 +192,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
+    // 🔧 avoid eager-load alias issues by loading in two steps
     const joins = await UserHunt.findAll({
       where: { userId: id },
       order: [["createdAt", "DESC"]],
@@ -188,7 +227,16 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
     }
     res.json(results);
   } catch (e) {
-    console.error("GET /api/users/:id/hunts/joined failed:", e);
+    if (isBenignSequelizeError(e)) {
+      console.warn("GET /api/users/:id/hunts/joined benign error; returning []", e?.message || e);
+      return res.json([]); // <-- avoid 500 for dashboard list
+    }
+    console.error("GET /api/users/:id/hunts/joined failed:", {
+      id,
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load joined hunts" });
   }
 });
@@ -232,7 +280,12 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
 
     res.json({ stats, hunts });
   } catch (e) {
-    console.error("GET /api/users/:id/overview failed:", e);
+    console.error("GET /api/users/:id/overview failed:", {
+      id,
+      name: e?.name,
+      message: e?.message,
+      parent: e?.parent?.message,
+    });
     res.status(500).json({ error: "Failed to load player overview" });
   }
 });
