@@ -9,43 +9,39 @@ const {
   UserHunt,
   Badge,
   UserBadge,
-  User,
-  Hunt,
 } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware");
-const { sendHuntCompletion } = require("../util/notify");
 
 // A little answer normalizer
 const norm = (s) => (s || "").trim().toLowerCase();
 
-//  Small helpers for attempts, next checkpoints, and progress rows
-async function getOrCreateProgress(t, userId, userHuntId, checkpointId) {
-  const [row] = await UserCheckpointProgress.findOrCreate({
-    where: { userId, userHuntId, checkpointId },
-    defaults: {
-      userId,
-      userHuntId,
-      checkpointId,
-      attemptsCount: 0,
-      solved: false,
-      lastAttemptAt: null,
-      lat: null,
-      lng: null,
-    },
-    transaction: t,
-  });
-  return row;
+// Optional geofence helper (meters). Uses a simple flat-earth approx good enough for small radii.
+function metersBetween(lat1, lng1, lat2, lng2) {
+  const dLat = (lat2 - lat1) * 111111;
+  const dLng =
+    (lng2 - lng1) * 111111 * Math.cos((((lat1 + lat2) / 2) * Math.PI) / 180);
+  return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
-async function getFirstCheckpointId(huntId, t) {
-  const first = await Checkpoint.findOne({
-    where: { huntId },
-    order: [["order", "ASC"]],
-    transaction: t,
-  });
-  return first ? first.id : null;
+// Simple meter offsets: (northMeters, eastMeters) from a base lat/lng
+function offsetMeters(lat, lng, northMeters, eastMeters) {
+  const dLat = northMeters / 111111;
+  const dLng = eastMeters / (111111 * Math.cos((lat * Math.PI) / 180));
+  return { lat: lat + dLat, lng: lng + dLng };
 }
 
+// Resolve a userId from req or, if missing, via the UserHunt row
+async function resolveUserId(req, userHuntId, t) {
+  const uid = req.user?.id || req.user?.userId;
+  if (uid) return uid;
+  if (userHuntId) {
+    const uh = await UserHunt.findByPk(userHuntId, { transaction: t });
+    return uh?.userId || null;
+  }
+  return null;
+}
+
+// Get the next checkpoint by (huntId, order)
 async function getNextCheckpointId(currentCp, t) {
   if (!currentCp) return null;
   const next = await Checkpoint.findOne({
@@ -55,31 +51,25 @@ async function getNextCheckpointId(currentCp, t) {
   return next ? next.id : null;
 }
 
-// GET /api/play/checkpoints/:checkpointId
-// Returns lightweight checkpoint info (NO answer).
+/* ============================================================================
+   GET /api/play/checkpoints/:checkpointId
+   Returns lightweight checkpoint info (NO answer).
+   ========================================================================== */
 router.get("/checkpoints/:checkpointId", async (req, res) => {
   const { checkpointId } = req.params;
   const cpId = Number(checkpointId);
-  if (!Number.isFinite(cpId) || cpId <= 0) {
+  if (!Number.isInteger(cpId) || cpId <= 0) {
     return res.status(400).json({ error: "Invalid checkpointId" });
   }
 
   try {
-    const row = await Checkpoint.findByPk(cpId, {
-      attributes: [
-        "id",
-        "title",
-        "riddle",
-        "lat",
-        "lng",
-        "toleranceRadius",
-        "sequenceIndex",
-        "huntId",
-      ],
-    });
-    if (!row) return res.status(404).json({ error: "Checkpoint not found" });
+    const cp = await Checkpoint.findByPk(cpId);
+    if (!cp) return res.status(404).json({ error: "Checkpoint not found" });
 
-    const toleranceRadius = row.toleranceRadius ?? row.tolerance_radius ?? null;
+    const row = cp.toJSON ? cp.toJSON() : cp;
+
+    const toleranceRadius =
+      row.toleranceRadius ?? row.tolerance ?? row.tolerance_radius ?? null;
     const sequenceIndex =
       row.sequenceIndex ?? row.order ?? row.sequence_index ?? null;
 
@@ -96,7 +86,13 @@ router.get("/checkpoints/:checkpointId", async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("GET /play/checkpoints/:checkpointId failed", e);
+    console.error("[play:getCheckpoint] failed", {
+      checkpointId: cpId,
+      name: e?.name,
+      message: e?.message,
+      sql: e?.parent?.sql,
+      sqlMessage: e?.parent?.message,
+    });
     return res.status(500).json({ error: "Failed to load checkpoint" });
   }
 });
@@ -126,90 +122,95 @@ router.post("/checkpoints/:checkpointId/anchor", requireAuth, async (req, res) =
 
   const t = await sequelize.transaction();
   try {
-    const cpX = await Checkpoint.findByPk(cpId, { transaction: t });
+    const cpX = await Checkpoint.findByPk(cpId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!cpX) {
       await t.rollback();
       return res.status(404).json({ error: "Checkpoint not found" });
     }
 
-    const huntId = cpX.huntId;
-    const cps = await Checkpoint.findAll({
-      where: { huntId },
-      order: [["order", "ASC"]],
-      transaction: t,
-    });
-
-    if (!cps || cps.length === 0) {
+    const uh = await UserHunt.findByPk(userHuntId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!uh || uh.huntId !== cpX.huntId) {
       await t.rollback();
-      return res.status(404).json({ error: "No checkpoints in this hunt" });
+      return res.status(403).json({ error: "Not joined to this hunt" });
     }
 
-    const c1 = cps[0];
-    const dist = (a, b) => {
-      const toRad = (x) => (x * Math.PI) / 180;
-      const R = 6371000;
-      const dLat = toRad((b.lat ?? 0) - (a.lat ?? 0));
-      const dLng = toRad((b.lng ?? 0) - (a.lng ?? 0));
-      const A =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(a.lat ?? 0)) *
-          Math.cos(toRad(b.lat ?? 0)) *
-          Math.sin(dLng / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(A));
-    };
+    // Find the first CP for this hunt (order/sequenceIndex = 1)
+    const cp1 =
+      (await Checkpoint.findOne({
+        where: { huntId: cpX.huntId, order: 1 },
+        transaction: t, lock: t.LOCK.UPDATE,
+      })) ||
+      (await Checkpoint.findOne({
+        where: { huntId: cpX.huntId, sequenceIndex: 1 },
+        transaction: t, lock: t.LOCK.UPDATE,
+      }));
 
-    const farFromC1 =
-      !Number.isFinite(c1?.lat) || !Number.isFinite(c1?.lng)
-        ? true
-        : dist({ lat, lng }, { lat: c1.lat, lng: c1.lng }) > THRESHOLD;
-
-    if (farFromC1 || force) {
-      c1.lat = lat;
-      c1.lng = lng;
-      await c1.save({ transaction: t });
+    if (!cp1) {
+      await t.rollback();
+      return res.status(400).json({ error: "Hunt missing first checkpoint" });
     }
 
-    const c2 = cps[1];
-    const c3 = cps[2];
-    const needNeighbors =
-      (c2 &&
-        (typeof c2.lat !== "number" ||
-          typeof c2.lng !== "number" ||
-          dist({ lat, lng }, { lat: c2.lat, lng: c2.lng }) > NEIGHBOR_THRESHOLD)) ||
-      (c3 &&
-        (typeof c3.lat !== "number" ||
-          typeof c3.lng !== "number" ||
-          dist({ lat, lng }, { lat: c3.lat, lng: c3.lng }) > NEIGHBOR_THRESHOLD));
+    const hadCoords = Number.isFinite(cp1.lat) && Number.isFinite(cp1.lng);
+    const prev = hadCoords ? { lat: cp1.lat, lng: cp1.lng } : null;
 
-    if (needNeighbors || forceNeighbors) {
-      if (c2) {
-        c2.lat = lat + 0.0009;
-        c2.lng = lng + 0.0009;
-        await c2.save({ transaction: t });
+    let updateCp1 = !hadCoords || Boolean(force);
+    if (!updateCp1 && hadCoords) {
+      const d = metersBetween(Number(lat), Number(lng), cp1.lat, cp1.lng);
+      if (Number.isFinite(d) && d > THRESHOLD) updateCp1 = true;
+    }
+
+    if (updateCp1) {
+      cp1.lat = Number(lat);
+      cp1.lng = Number(lng);
+      await cp1.save({ transaction: t });
+    }
+
+    // CP2 & CP3 handling (offsets from CP1)
+    const [cp2, cp3] = await Promise.all([
+      Checkpoint.findOne({ where: { huntId: cp1.huntId, order: 2 }, transaction: t, lock: t.LOCK.UPDATE }),
+      Checkpoint.findOne({ where: { huntId: cp1.huntId, order: 3 }, transaction: t, lock: t.LOCK.UPDATE }),
+    ]);
+
+    let updatedNeighbors = false;
+
+    if (cp2) {
+      const cp2Has = Number.isFinite(cp2.lat) && Number.isFinite(cp2.lng);
+      let rebase = !cp2Has || Boolean(forceNeighbors);
+      if (!rebase && cp2Has) {
+        const d2 = metersBetween(cp1.lat, cp1.lng, cp2.lat, cp2.lng);
+        if (Number.isFinite(d2) && d2 > NEIGHBOR_THRESHOLD) rebase = true;
       }
-      if (c3) {
-        c3.lat = lat + 0.0018;
-        c3.lng = lng + 0.0018;
-        await c3.save({ transaction: t });
+      if (rebase) {
+        const o2 = offsetMeters(cp1.lat, cp1.lng, 150, 120); // ~190m NE
+        cp2.lat = o2.lat; cp2.lng = o2.lng;
+        await cp2.save({ transaction: t });
+        updatedNeighbors = true;
       }
     }
 
-    // Track that user anchored near here, non-critical
-    try {
-      const uh = await UserHunt.findByPk(userHuntId, { transaction: t });
-      if (uh) {
-        const p = await getOrCreateProgress(t, uh.userId, uh.id, c1.id);
-        p.lastAttemptAt = new Date();
-        p.lat = lat;
-        p.lng = lng;
-        await p.save({ transaction: t });
+    if (cp3) {
+      const cp3Has = Number.isFinite(cp3.lat) && Number.isFinite(cp3.lng);
+      let rebase = !cp3Has || Boolean(forceNeighbors);
+      if (!rebase && cp3Has) {
+        const d3 = metersBetween(cp1.lat, cp1.lng, cp3.lat, cp3.lng);
+        if (Number.isFinite(d3) && d3 > NEIGHBOR_THRESHOLD) rebase = true;
       }
-    } catch (e) {
-      // non-blocking
+      if (rebase) {
+        const o3 = offsetMeters(cp1.lat, cp1.lng, 240, -220); // ~330m NW
+        cp3.lat = o3.lat; cp3.lng = o3.lng;
+        await cp3.save({ transaction: t });
+        updatedNeighbors = true;
+      }
     }
 
     await t.commit();
-    return res.json({ ok: true });
+    return res.json({
+      ok: true,
+      updated: Boolean(updateCp1 || updatedNeighbors),
+      previous: prev,
+      checkpoint: { id: cp1.id, lat: cp1.lat, lng: cp1.lng },
+      neighborsUpdated: updatedNeighbors,
+    });
   } catch (e) {
     await t.rollback();
     console.error("[play:anchor] failed", e);
@@ -227,72 +228,113 @@ router.post(
   requireAuth,
   async (req, res) => {
     const { checkpointId } = req.params;
-    const { answer, lat, lng, userHuntId } = req.body || {};
+    const { answer, userHuntId, lat, lng } = req.body || {};
 
     const cpId = Number(checkpointId);
-    if (!Number.isFinite(cpId) || cpId <= 0) {
+    if (!Number.isInteger(cpId) || cpId <= 0) {
       return res.status(400).json({ error: "Invalid checkpointId" });
     }
-    if (!userHuntId) {
-      return res.status(400).json({ error: "userHuntId required" });
+    if (typeof answer !== "string" || answer.trim() === "") {
+      return res.status(400).json({ error: "answer is required" });
     }
 
     const t = await sequelize.transaction();
     try {
-      const cp = await Checkpoint.findByPk(cpId, { transaction: t });
+      const cp = await Checkpoint.findByPk(cpId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
       if (!cp) {
         await t.rollback();
         return res.status(404).json({ error: "Checkpoint not found" });
       }
 
-      const uh = await UserHunt.findByPk(userHuntId, { transaction: t });
+      const uh = userHuntId
+        ? await UserHunt.findByPk(userHuntId, {
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          })
+        : null;
+
       if (!uh) {
         await t.rollback();
-        return res.status(404).json({ error: "UserHunt not found" });
+        return res
+          .status(400)
+          .json({ error: "userHuntId is required or invalid" });
       }
 
-      // Ensure startedAt is set
-      if (!uh.startedAt) {
-        uh.startedAt = new Date();
-        await uh.save({ transaction: t });
+      if (uh.huntId !== cp.huntId) {
+        await t.rollback();
+        return res
+          .status(400)
+          .json({ error: "Checkpoint does not belong to this hunt" });
       }
 
-      const progress = await getOrCreateProgress(t, uh.userId, uh.id, cp.id);
+      let progress = await UserCheckpointProgress.findOne({
+        where: { userHuntId: uh.id, checkpointId: cp.id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
 
-      // Max attempts guard (if configured)
+      if (!progress) {
+        progress = await UserCheckpointProgress.create(
+          { userHuntId: uh.id, checkpointId: cp.id, attemptsCount: 0 },
+          { transaction: t }
+        );
+        await progress.reload({ transaction: t, lock: t.LOCK.UPDATE });
+      }
+
       if (cp.maxAttempts && progress.attemptsCount >= cp.maxAttempts) {
         await t.rollback();
-        return res.status(429).json({ error: "No attempts remaining" });
+        return res
+          .status(403)
+          .json({ error: "Attempt limit reached for this checkpoint" });
       }
 
-      // Record attempt row (auditable)
+      const wasCorrect = norm(answer) === norm(cp.answer);
+
+      if (
+        cp.lat != null &&
+        cp.lng != null &&
+        (cp.toleranceRadius != null || cp.tolerance != null) &&
+        lat != null &&
+        lng != null
+      ) {
+        const tol = Number(cp.toleranceRadius ?? cp.tolerance);
+        const dist = metersBetween(Number(lat), Number(lng), cp.lat, cp.lng);
+        if (Number.isFinite(dist) && Number.isFinite(tol) && dist > tol) {
+          await t.rollback();
+          return res.status(403).json({
+            error: `You are too far from the checkpoint (distance ${Math.round(
+              dist
+            )}m, must be within ${tol}m)`,
+          });
+        }
+      }
+
       await CheckpointAttempt.create(
         {
-          userId: uh.userId,
           userHuntId: uh.id,
           checkpointId: cp.id,
-          submittedAnswer: answer || "",
-          lat: Number.isFinite(lat) ? lat : null,
-          lng: Number.isFinite(lng) ? lng : null,
-          createdAt: new Date(),
+          riddleAnswer: String(answer),
+          wasCorrect,
+          attemptLat: lat ?? null,
+          attemptLng: lng ?? null,
         },
         { transaction: t }
       );
 
-      // Validate answer
-      const wasCorrect = norm(answer) && norm(answer) === norm(cp.answer);
+      progress.attemptsCount += 1;
 
-      // Update progress
-      progress.attemptsCount = (progress.attemptsCount || 0) + 1;
-      progress.lastAttemptAt = new Date();
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        progress.lat = lat;
-        progress.lng = lng;
+      // --- NEW: detect first-time solve for this user/checkpoint
+      const wasFirstSolve = wasCorrect && !progress.solvedAt; // before we set it
+
+      if (wasCorrect && !progress.solvedAt) {
+        progress.solvedAt = new Date();
       }
-      if (wasCorrect) progress.solved = true;
 
-      // If correct, grant checkpoint badges (if any)
-      if (wasCorrect) {
+      // --- NEW: grant checkpoint-specific badge(s) on first correct solve
+      if (wasFirstSolve) {
         try {
           const checkpointBadges = await Badge.findAll({
             where: { checkpointId: cp.id },
@@ -317,7 +359,6 @@ router.post(
         nextCheckpointId = await getNextCheckpointId(cp, t);
 
         if (!nextCheckpointId) {
-          // Hunt completed
           uh.status = "completed";
           uh.completedAt = new Date();
           if (uh.startedAt) {
@@ -331,7 +372,6 @@ router.post(
           await uh.save({ transaction: t });
 
           try {
-            // Derived badges on completion (Pathfinder, Speedrunner, Badge Collector)
             const userId = uh.userId;
             const pf = await Badge.findOne({ where: { title: "Pathfinder" }, transaction: t });
             if (pf) {
@@ -343,7 +383,6 @@ router.post(
             }
 
             const SPEEDRUN_SECS = 30 * 60;
-
             if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
               const sr = await Badge.findOne({ where: { title: "Speedrunner" }, transaction: t });
               if (sr) {
@@ -370,51 +409,6 @@ router.post(
             console.warn("Derived badge grant failed (non-blocking):", e?.message || e);
           }
         }
-      }
-
-      // Notify player and creator on hunt completion
-      if (wasCorrect && !nextCheckpointId) {
-        try {
-          const [player, hunt] = await Promise.all([
-            User.findByPk(uh.userId, { transaction: t }),
-            Hunt.findByPk(cp.huntId, { include: [{ model: User, as: "creator" }], transaction: t }),
-          ]);
-          if (player && hunt) {
-            await sendHuntCompletion({ user: player, hunt, userHunt: uh });
-          }
-        } catch (e) {
-          console.warn("Hunt completion notification failed:", e?.message || e);
-        }
-      }
-
-      // SMS when player is near the next checkpoint
-      try {
-        if (nextCheckpointId && Number.isFinite(lat) && Number.isFinite(lng)) {
-          const nextCp = await Checkpoint.findByPk(nextCheckpointId, { transaction: t });
-          const user = await User.findByPk(uh.userId, { transaction: t });
-          const to = user && user.phone ? user.phone : null;
-          const meters = process.env.SMS_NEAR_METERS ? parseInt(process.env.SMS_NEAR_METERS, 10) : 50;
-
-          function toRad(x){ return (x * Math.PI) / 180; }
-          function haversine(aLat, aLng, bLat, bLng) {
-            const R = 6371000;
-            const dLat = toRad(bLat - aLat);
-            const dLng = toRad(bLng - aLng);
-            const A = Math.sin(dLat/2)**2 + Math.cos(toRad(aLat))*Math.cos(toRad(bLat))*Math.sin(dLng/2)**2;
-            return 2 * R * Math.asin(Math.sqrt(A));
-          }
-
-          if (nextCp && to && Number.isFinite(nextCp.lat) && Number.isFinite(nextCp.lng)) {
-            const dist = haversine(lat, lng, nextCp.lat, nextCp.lng);
-            if (dist <= meters) {
-              const { sendSMS, logNotification } = require("../util/notify");
-              const resp = await sendSMS({ to, body: "You are near the next SideQuest checkpoint. Open the app to continue!" });
-              await logNotification({ userId: uh.userId, type: "sms", template: "near_next_checkpoint", status: resp.ok ? "sent" : "failed", error: resp.error });
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("Optional SMS near-next-checkpoint failed:", e?.message || e);
       }
 
       await t.commit();
