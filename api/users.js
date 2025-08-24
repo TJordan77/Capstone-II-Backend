@@ -90,17 +90,24 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
   try {
-    // Use existing User <-> Badge belongsToMany (alias: "badges")
-    const user = await User.findByPk(id, {
-      include: [{ model: Badge, as: "badges", through: { attributes: ["createdAt"] } }],
-      attributes: ["id"],
+    // ✅ Robust to association alias differences:
+    // Read from the join table, then fetch the Badge rows explicitly.
+    const links = await UserBadge.findAll({
+      where: { userId: id },
+      attributes: ["badgeId", "createdAt"],
+      order: [["createdAt", "DESC"]],
     });
-    if (!user) return res.status(404).json({ error: "User not found" });
 
-    const badges = (user.badges || []).map((b) =>
-      pickBadge(b, b.UserBadge?.createdAt || b.createdAt)
-    );
-    res.json(badges);
+    if (!links.length) return res.json([]);
+
+    const badgeIds = [...new Set(links.map((l) => l.badgeId))];
+    const badges = await Badge.findAll({ where: { id: badgeIds } });
+
+    // Index earnedAt from links by badgeId
+    const earnedAtById = new Map(links.map((l) => [l.badgeId, l.createdAt]));
+
+    const shaped = badges.map((b) => pickBadge(b, earnedAtById.get(b.id)));
+    res.json(shaped);
   } catch (e) {
     console.error("GET /api/users/:id/badges failed:", e);
     res.status(500).json({ error: "Failed to load badges" });
@@ -131,16 +138,19 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   try {
     const joins = await UserHunt.findAll({
       where: { userId: id },
-      include: [{ model: Hunt, as: "hunt" }],
+      include: [{ model: Hunt, as: "hunt" }], // keep your alias; if association differs it will just omit and we guard for it
       order: [["createdAt", "DESC"]],
     });
 
     const results = [];
     for (const j of joins) {
       if (!j.hunt) continue;
+
+      // ✅ FIX: UserCheckpointProgress uses userHuntId (not userId/huntId)
       const solved = await UserCheckpointProgress.count({
-        where: { userId: id, huntId: j.huntId, solvedAt: { [Op.ne]: null } },
+        where: { userHuntId: j.id, solvedAt: { [Op.ne]: null } },
       });
+
       results.push({
         ...pickHunt(j.hunt),
         userHuntId: j.id,
