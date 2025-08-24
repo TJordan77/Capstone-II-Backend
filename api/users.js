@@ -137,23 +137,31 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
+    // 🔧 CHANGE: avoid eager-load alias issues by loading in two steps
     const joins = await UserHunt.findAll({
       where: { userId: id },
-      include: [{ model: Hunt, as: "hunt" }], // keep your alias; if association differs it will just omit and we guard for it
       order: [["createdAt", "DESC"]],
+      attributes: ["id", "huntId", "createdAt", "completedAt"],
     });
+
+    if (!joins.length) return res.json([]);
+
+    const huntIds = [...new Set(joins.map(j => j.huntId).filter(Boolean))];
+    const hunts = await Hunt.findAll({ where: { id: huntIds } });
+    const huntsById = new Map(hunts.map(h => [h.id, h]));
 
     const results = [];
     for (const j of joins) {
-      if (!j.hunt) continue;
+      const h = huntsById.get(j.huntId);
+      if (!h) continue;
 
-      // ✅ FIX: UserCheckpointProgress uses userHuntId (not userId/huntId)
+      // ✅ UserCheckpointProgress uses userHuntId (not userId/huntId)
       const solved = await UserCheckpointProgress.count({
         where: { userHuntId: j.id, solvedAt: { [Op.ne]: null } },
       });
 
       results.push({
-        ...pickHunt(j.hunt),
+        ...pickHunt(h),
         userHuntId: j.id,
         joinedAt: j.createdAt,
         completedAt: j.completedAt,
