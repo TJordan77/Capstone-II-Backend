@@ -123,19 +123,45 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
     return res.status(400).json({ error: "Invalid user id" });
   }
   try {
-    // Use existing User <-> Badge belongsToMany (alias: "badges")
+    // First try via association include (if the association alias exists)
     const user = await User.findByPk(userId, {
       include: [{ model: Badge, as: "badges", through: { attributes: ["createdAt"] } }],
       attributes: ["id"],
     });
-    if (!user) return res.status(404).json({ error: "User not found" });
 
-    const badges = (user.badges || []).map((b) => ({
-      ...pickBadge(b),
-      earnedAt: b.UserBadge?.createdAt || b.createdAt,
-    }));
+    let shaped = null;
 
-    return res.json(badges);
+    if (user && Array.isArray(user.badges)) {
+      const badges = user.badges.map((b) => ({
+        ...pickBadge(b),
+        // prefer the join-table timestamp if available
+        earnedAt: b.UserBadge?.createdAt || b.createdAt,
+      }));
+      shaped = badges;
+    }
+
+    // Fallback: query the join table directly (handles alias/assoc mismatch)
+    if (!shaped) {
+      const links = await UserBadge.findAll({
+        where: { userId },
+        attributes: ["badgeId", "createdAt"],
+        order: [["createdAt", "DESC"]],
+      });
+
+      if (!links.length) return res.json([]);
+
+      const badgeIds = [...new Set(links.map((l) => l.badgeId))];
+      const earnedAtById = new Map(links.map((l) => [l.badgeId, l.createdAt]));
+
+      const badges = await Badge.findAll({ where: { id: badgeIds } });
+
+      shaped = badges.map((b) => ({
+        ...pickBadge(b),
+        earnedAt: earnedAtById.get(b.id),
+      }));
+    }
+
+    return res.json(shaped);
   } catch (e) {
     console.error("GET /api/badges/user/:userId failed:", e);
     return res.status(500).json({ error: "Failed to load user badges" });
