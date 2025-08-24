@@ -10,7 +10,7 @@ const {
   UserHunt,
   UserCheckpointProgress,
 } = require("../database");
-// const { requireAuth } = require("../middleware/authMiddleware");
+const { requireAuth } = require("../middleware/authMiddleware"); // <-- enabled
 
 /* ====== Minimal Profile Endpoints (mounted under this router) ====== */
 /* NOTE: Hey so because these are defined in this file, their effective paths will be
@@ -58,7 +58,7 @@ function pickBadge(b, earnedAt) {
 }
 
 // GET /users/me
-router.get("/me", /* requireAuth, */ async (req, res) => {
+router.get("/me", requireAuth, async (req, res) => { // <-- protected
   try {
     const userId = req.user?.id || req.user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
