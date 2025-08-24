@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const { Op } = require("sequelize");
-const jwt = require("jsonwebtoken"); // <-- ADDED: verify cookie token locally
 const {
   sequelize,
   User,
@@ -11,7 +10,7 @@ const {
   UserHunt,
   UserCheckpointProgress,
 } = require("../database");
-const { requireAuth } = require("../middleware/authMiddleware"); // <-- enabled
+const { requireAuth } = require("../middleware/authMiddleware"); 
 
 /* ====== Minimal Profile Endpoints (mounted under this router) ====== */
 /* NOTE: Hey so because these are defined in this file, their effective paths will be
@@ -58,50 +57,16 @@ function pickBadge(b, earnedAt) {
   };
 }
 
-// Small helper to decide if we should fall back to an empty array (avoid noisy 500s on prod)
-function isBenignSequelizeError(err) {
-  const msg = err?.message || err?.name || "";
-  const parentMsg = err?.parent?.message || "";
-  // Eager loading alias issues / missing relations / unknown columns (Neon/Vercel cold schema)
-  return (
-    /EagerLoadingError/i.test(msg) ||
-    /relation .* does not exist/i.test(parentMsg) ||
-    /column .* does not exist/i.test(parentMsg) ||
-    /SQLITE_ERROR: no such table/i.test(parentMsg) ||
-    /Unknown column/i.test(parentMsg)
-  );
-}
-
 // GET /users/me
-router.get("/me", /* requireAuth, */ async (req, res) => { // <-- protected
+router.get("/me", requireAuth, async (req, res) => { // <-- protected
   try {
-    // Read JWT from cookie directly to avoid header/cookie mismatch
-    const token = req.cookies && req.cookies.token;
-    if (!token) return res.status(401).json({ error: "Not authenticated" });
-
-    let payload;
-    try {
-      const secret = process.env.JWT_SECRET;
-      if (!secret) throw new Error("JWT_SECRET missing");
-      payload = jwt.verify(token, secret);
-    } catch (e) {
-      console.error("JWT verify failed for /users/me:", e?.message || e);
-      return res.status(403).json({ error: "Invalid or expired token" });
-    }
-
-    const userId = payload?.id || payload?.userId;
+    const userId = req.user?.id || req.user?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
     const me = await User.findByPk(userId);
     if (!me) return res.status(404).json({ error: "User not found" });
-
     res.json(pickUser(me));
   } catch (e) {
-    console.error("GET /api/users/me failed:", {
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/me failed:", e);
     res.status(500).json({ error: "Failed to load profile" });
   }
 });
@@ -115,12 +80,7 @@ router.get("/:id", /* requireAuth, */ async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(pickUser(user));
   } catch (e) {
-    console.error("GET /api/users/:id failed:", {
-      id,
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/:id failed:", e);
     res.status(500).json({ error: "Failed to load user" });
   }
 });
@@ -130,7 +90,6 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
   try {
-    // ✅ Robust to association alias differences:
     // Read from the join table, then fetch the Badge rows explicitly.
     const links = await UserBadge.findAll({
       where: { userId: id },
@@ -140,9 +99,7 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
 
     if (!links.length) return res.json([]);
 
-    const badgeIds = [...new Set(links.map((l) => l.badgeId))].filter(Boolean);
-    if (!badgeIds.length) return res.json([]);
-
+    const badgeIds = [...new Set(links.map((l) => l.badgeId))];
     const badges = await Badge.findAll({ where: { id: badgeIds } });
 
     // Index earnedAt from links by badgeId
@@ -151,16 +108,7 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     const shaped = badges.map((b) => pickBadge(b, earnedAtById.get(b.id)));
     res.json(shaped);
   } catch (e) {
-    if (isBenignSequelizeError(e)) {
-      console.warn("GET /api/users/:id/badges benign error; returning []", e?.message || e);
-      return res.json([]); // <-- avoid 500 for display-only route
-    }
-    console.error("GET /api/users/:id/badges failed:", {
-      id,
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/:id/badges failed:", e);
     res.status(500).json({ error: "Failed to load badges" });
   }
 });
@@ -176,12 +124,7 @@ router.get("/:id/hunts/created", /* requireAuth, */ async (req, res) => {
     });
     res.json(hunts.map(pickHunt));
   } catch (e) {
-    console.error("GET /api/users/:id/hunts/created failed:", {
-      id,
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/:id/hunts/created failed:", e);
     res.status(500).json({ error: "Failed to load created hunts" });
   }
 });
@@ -192,27 +135,19 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
-    // 🔧 avoid eager-load alias issues by loading in two steps
+    // remove include alias to avoid "Association with alias 'hunt' does not exist"
     const joins = await UserHunt.findAll({
       where: { userId: id },
       order: [["createdAt", "DESC"]],
-      attributes: ["id", "huntId", "createdAt", "completedAt"],
     });
-
-    if (!joins.length) return res.json([]);
-
-    const huntIds = [...new Set(joins.map(j => j.huntId).filter(Boolean))];
-    if (!huntIds.length) return res.json([]);
-
-    const hunts = await Hunt.findAll({ where: { id: huntIds } });
-    const huntsById = new Map(hunts.map(h => [h.id, h]));
 
     const results = [];
     for (const j of joins) {
-      const h = huntsById.get(j.huntId);
+      // fetch Hunt by foreign key directly to avoid alias issues
+      const h = await Hunt.findByPk(j.huntId);
       if (!h) continue;
 
-      // ✅ UserCheckpointProgress uses userHuntId (not userId/huntId)
+      // UserCheckpointProgress uses userHuntId (not userId/huntId)
       const solved = await UserCheckpointProgress.count({
         where: { userHuntId: j.id, solvedAt: { [Op.ne]: null } },
       });
@@ -227,16 +162,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
     }
     res.json(results);
   } catch (e) {
-    if (isBenignSequelizeError(e)) {
-      console.warn("GET /api/users/:id/hunts/joined benign error; returning []", e?.message || e);
-      return res.json([]); // <-- avoid 500 for dashboard list
-    }
-    console.error("GET /api/users/:id/hunts/joined failed:", {
-      id,
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/:id/hunts/joined failed:", e);
     res.status(500).json({ error: "Failed to load joined hunts" });
   }
 });
@@ -251,21 +177,22 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
       UserBadge.findAll({ where: { userId: id }, attributes: ["id"] }),
       UserHunt.findAll({
         where: { userId: id },
-        include: [{ model: Hunt, as: "hunt" }],
+        // keep this simple and robust too
         order: [["createdAt", "DESC"]],
       }),
     ]);
 
     const hunts = [];
     for (const j of joins) {
-      if (!j.hunt) continue;
+      const h = await Hunt.findByPk(j.huntId);
+      if (!h) continue;
       hunts.push({
-        id: j.hunt.id,
-        title: j.hunt.title || j.hunt.name,
-        description: j.hunt.description,
-        coverUrl: j.hunt.coverUrl,
-        createdAt: j.hunt.createdAt,
-        updatedAt: j.hunt.updatedAt,
+        id: h.id,
+        title: h.title || h.name,
+        description: h.description,
+        coverUrl: h.coverUrl,
+        createdAt: h.createdAt,
+        updatedAt: h.updatedAt,
         userHuntId: j.id,
         joinedAt: j.createdAt,
         completedAt: j.completedAt || null,
@@ -280,12 +207,7 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
 
     res.json({ stats, hunts });
   } catch (e) {
-    console.error("GET /api/users/:id/overview failed:", {
-      id,
-      name: e?.name,
-      message: e?.message,
-      parent: e?.parent?.message,
-    });
+    console.error("GET /api/users/:id/overview failed:", e);
     res.status(500).json({ error: "Failed to load player overview" });
   }
 });
