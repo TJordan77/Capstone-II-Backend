@@ -111,7 +111,6 @@ Badge.belongsToMany(User, {
 });
 
 // Direct refs from the join table (needed for includes using `as: "badge"`)
-/* 🔧 SMALL EDIT: add `as: "user"` so includes can use that alias */
 UserBadge.belongsTo(User, {
   as: "user",
   foreignKey: { name: "userId", field: "user_id" },
