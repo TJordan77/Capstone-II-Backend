@@ -373,4 +373,48 @@ router.get("/me", (req, res) => {
   });
 });
 
+// --- ADDITION: profile update route ---
+router.put("/profile", authenticateJWT, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).send({ error: "Not authenticated" });
+
+    const u = await User.findByPk(userId);
+    if (!u) return res.status(404).send({ error: "User not found" });
+
+    const { name, email, profilePicture } = req.body || {};
+
+    if (typeof name === "string" && name.trim()) {
+      const parts = name.trim().split(/\s+/);
+      u.firstName = parts.shift() || u.firstName;
+      u.lastName = parts.length ? parts.join(" ") : u.lastName;
+    }
+
+    if (typeof email === "string") {
+      u.email = email.trim() || null;
+    }
+
+    if (typeof profilePicture === "string" && profilePicture.trim()) {
+      u.profilePicture = profilePicture.trim();
+    }
+
+    await u.save();
+
+    res.send({
+      message: "Profile updated",
+      user: {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        profilePicture: u.profilePicture || null,
+      },
+    });
+  } catch (e) {
+    console.error("PUT /api/auth/profile failed:", e);
+    res.status(500).send({ error: "Failed to update profile" });
+  }
+});
+
 module.exports = { router, authenticateJWT };
