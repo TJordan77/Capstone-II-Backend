@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { Op } = require("sequelize");
+const jwt = require("jsonwebtoken"); // <-- ADDED: verify cookie token locally
 const {
   sequelize,
   User,
@@ -11,7 +12,6 @@ const {
   UserCheckpointProgress,
 } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware"); // <-- enabled
-const { authenticateJWT } = require("../auth"); // <-- ADDED
 
 /* ====== Minimal Profile Endpoints (mounted under this router) ====== */
 /* NOTE: Hey so because these are defined in this file, their effective paths will be
@@ -59,12 +59,27 @@ function pickBadge(b, earnedAt) {
 }
 
 // GET /users/me
-router.get("/me", authenticateJWT, async (req, res) => { // <-- protected via cookie JWT
+router.get("/me", /* requireAuth, */ async (req, res) => { // <-- protected
   try {
-    const userId = req.user?.id || req.user?.userId;
+    // Read JWT from cookie directly to avoid header/cookie mismatch
+    const token = req.cookies && req.cookies.token;
+    if (!token) return res.status(401).json({ error: "Not authenticated" });
+
+    let payload;
+    try {
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error("JWT_SECRET missing");
+      payload = jwt.verify(token, secret);
+    } catch (e) {
+      return res.status(403).json({ error: "Invalid or expired token" });
+    }
+
+    const userId = payload?.id || payload?.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
     const me = await User.findByPk(userId);
     if (!me) return res.status(404).json({ error: "User not found" });
+
     res.json(pickUser(me));
   } catch (e) {
     console.error("GET /api/users/me failed:", e);
@@ -101,7 +116,9 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
 
     if (!links.length) return res.json([]);
 
-    const badgeIds = [...new Set(links.map((l) => l.badgeId))];
+    const badgeIds = [...new Set(links.map((l) => l.badgeId))].filter(Boolean);
+    if (!badgeIds.length) return res.json([]);
+
     const badges = await Badge.findAll({ where: { id: badgeIds } });
 
     // Index earnedAt from links by badgeId
@@ -137,7 +154,6 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
-    // 🔧 CHANGE: avoid eager-load alias issues by loading in two steps
     const joins = await UserHunt.findAll({
       where: { userId: id },
       order: [["createdAt", "DESC"]],
@@ -147,6 +163,8 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
     if (!joins.length) return res.json([]);
 
     const huntIds = [...new Set(joins.map(j => j.huntId).filter(Boolean))];
+    if (!huntIds.length) return res.json([]);
+
     const hunts = await Hunt.findAll({ where: { id: huntIds } });
     const huntsById = new Map(hunts.map(h => [h.id, h]));
 
