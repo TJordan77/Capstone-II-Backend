@@ -325,9 +325,33 @@ router.post(
       );
 
       progress.attemptsCount += 1;
+
+      // --- NEW: detect first-time solve for this user/checkpoint
+      const wasFirstSolve = wasCorrect && !progress.solvedAt; // before we set it
+
       if (wasCorrect && !progress.solvedAt) {
         progress.solvedAt = new Date();
       }
+
+      // --- NEW: grant checkpoint-specific badge(s) on first correct solve
+      if (wasFirstSolve) {
+        try {
+          const checkpointBadges = await Badge.findAll({
+            where: { checkpointId: cp.id },
+            transaction: t,
+          });
+          for (const b of checkpointBadges) {
+            await UserBadge.findOrCreate({
+              where: { userId: uh.userId, badgeId: b.id },
+              defaults: { userId: uh.userId, badgeId: b.id },
+              transaction: t,
+            });
+          }
+        } catch (e) {
+          console.warn("Checkpoint badge grant failed (non-blocking):", e?.message || e);
+        }
+      }
+
       await progress.save({ transaction: t });
 
       let nextCheckpointId = null;
