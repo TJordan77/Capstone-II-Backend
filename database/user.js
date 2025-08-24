@@ -24,7 +24,8 @@ const User = sequelize.define(
     passwordHash: { type: DataTypes.STRING, allowNull: true },
     // optional profile fields used by your UI
     role: { type: DataTypes.STRING, allowNull: true },
-    profilePicture: { type: DataTypes.STRING, allowNull: true },
+    // CHANGED: use TEXT so base64 / data URLs aren't truncated
+    profilePicture: { type: DataTypes.TEXT, allowNull: true },
     badgeCount: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 0 },
   },
   {
