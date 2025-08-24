@@ -352,19 +352,23 @@ router.get("/me", (req, res) => {
     return res.send({});
   }
 
-  // ADDED: fetch the fresh user from DB after verifying token
-  jwt.verify(token, JWT_SECRET, async (err, user) => { // CHANGED: make callback async
+  // Fetch the fresh user from DB after verifying token
+  jwt.verify(token, JWT_SECRET, async (err, user) => { // Make callback async
     if (err) {
       return res.status(403).send({ error: "Invalid or expired token" });
     }
 
     try {
       const dbUser = await User.findByPk(user.id, {
-        attributes: ["id", "email", "username", "firstName", "lastName", "auth0Id"],
+        attributes: ["id", "email", "username", "firstName", "lastName", "auth0Id", "profilePicture"],
       }); 
       if (!dbUser) return res.send({}); 
 
-      // ADDED: return normalized user object
+      // Return both names for compatibility
+      const u = dbUser.toJSON();
+      u.avatarUrl = u.profilePicture || null;
+
+      // Return normalized user object
       res.send({ user: dbUser }); 
     } catch (e) {
       console.error("ME lookup error:", e); 
@@ -409,6 +413,7 @@ router.put("/profile", authenticateJWT, async (req, res) => {
         firstName: u.firstName,
         lastName: u.lastName,
         profilePicture: u.profilePicture || null,
+        avatarUrl: u.profilePicture || null,
       },
     });
   } catch (e) {
