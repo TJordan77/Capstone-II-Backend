@@ -23,8 +23,10 @@ const { requireAuth } = require("../middleware/authMiddleware");
      - GET /api/hunts/users/:id/hunts/joined
 */
 // (In this file we mount at /api/users, so the effective paths are /api/users/me, etc.)
-// small shapers kept local
+
+// util helpers kept small and dumb (no sequelize instances leaking to client)
 function pickUser(u) {
+  if (!u) return null;
   return {
     id: u.id,
     username: u.username,
@@ -40,44 +42,38 @@ function pickHunt(h) {
     title: h.title || h.name,
     description: h.description,
     coverUrl: h.coverUrl,
-    isActive: !!(h.isActive ?? (h.endsAt ? new Date(h.endsAt) > new Date() : true)),
     createdAt: h.createdAt,
     updatedAt: h.updatedAt,
-  };
-}
-function pickBadge(b, earnedAt) {
-  return {
-    id: b.id,
-    // map DB fields (title/image) to API shape
-    name: b.title ?? b.name,
-    imageUrl: b.image ?? b.imageUrl,
-    description: b.description,
-    earnedAt,
+    slug: h.slug || null,
+    isActive: h.isActive,
+    isPublished: h.isPublished,
+    visibility: h.visibility,
   };
 }
 
-// GET /users/me
-router.get("/me", requireAuth, async (req, res) => {
-  try {
-    const userId = req.user?.id || req.user?.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const me = await User.findByPk(userId);
-    if (!me) return res.status(404).json({ error: "User not found" });
-    res.json(pickUser(me));
-  } catch (e) {
-    console.error("GET /api/users/me failed:", e);
-    res.status(500).json({ error: "Failed to load profile" });
-  }
-});
+function slugifyName(name = "") {
+  return String(name)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function getBadgeIcon(badge) {
+  if (badge?.imageUrl) return badge.imageUrl;
+  const slug = slugifyName(badge?.name || "");
+  return `/icon-${slug}.png`;
+}
 
 // GET /users/:id
 router.get("/:id", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+
   try {
-    const user = await User.findByPk(id);
-    if (!user) return res.status(404).json({ error: "User not found" });
-    res.json(pickUser(user));
+    const u = await User.findByPk(id);
+    if (!u) return res.status(404).json({ error: "User not found" });
+    res.json(pickUser(u));
   } catch (e) {
     console.error("GET /api/users/:id failed:", e);
     res.status(500).json({ error: "Failed to load user" });
@@ -92,7 +88,7 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     // Read from the join table, then fetch the Badge rows explicitly.
     const links = await UserBadge.findAll({
       where: { userId: id },
-      attributes: ["badgeId", "earnedAt"], // FIX: use earnedAt, not createdAt
+      attributes: ["badgeId", "earnedAt"], // use earnedAt, not createdAt
       order: [["earnedAt", "DESC"]],
     });
 
@@ -101,11 +97,20 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
     const badgeIds = [...new Set(links.map((l) => l.badgeId))];
     const badges = await Badge.findAll({ where: { id: badgeIds } });
 
-    // Index earnedAt from links by badgeId
-    const earnedAtById = new Map(links.map((l) => [l.badgeId, l.earnedAt]));
+    // Map to a uniform shape the UI expects
+    const byId = new Map(badges.map((b) => [b.id, b]));
+    const results = links
+      .map((l) => byId.get(l.badgeId))
+      .filter(Boolean)
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        description: b.description || "",
+        imageUrl: getBadgeIcon(b),
+        earnedAt: links.find((l) => l.badgeId === b.id)?.earnedAt || null,
+      }));
 
-    const shaped = badges.map((b) => pickBadge(b, earnedAtById.get(b.id)));
-    res.json(shaped);
+    res.json(results);
   } catch (e) {
     console.error("GET /api/users/:id/badges failed:", e);
     res.status(500).json({ error: "Failed to load badges" });
@@ -116,6 +121,7 @@ router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
 router.get("/:id/hunts/created", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+
   try {
     const hunts = await Hunt.findAll({
       where: { creatorId: id },
@@ -134,10 +140,10 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
-    // This version avoids alias issues and stays robust
+    // UserHunt has no createdAt; order by startedAt
     const joins = await UserHunt.findAll({
       where: { userId: id },
-      order: [["createdAt", "DESC"]],
+      order: [["startedAt", "DESC"]],
     });
 
     const results = [];
@@ -152,7 +158,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
       results.push({
         ...pickHunt(h),
         userHuntId: j.id,
-        joinedAt: j.createdAt,
+        joinedAt: j.startedAt || null,
         completedAt: j.completedAt,
         solvedCount: solved,
       });
@@ -164,7 +170,7 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   }
 });
 
-// GET /api/users/:id/overview
+// GET /users/:id/overview
 router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
@@ -174,7 +180,7 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
       UserBadge.findAll({ where: { userId: id }, attributes: ["id"] }),
       UserHunt.findAll({
         where: { userId: id },
-        order: [["createdAt", "DESC"]],
+        order: [["startedAt", "DESC"]],
       }),
     ]);
 
@@ -190,7 +196,7 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
         createdAt: h.createdAt,
         updatedAt: h.updatedAt,
         userHuntId: j.id,
-        joinedAt: j.createdAt,
+        joinedAt: j.startedAt || null,
         completedAt: j.completedAt || null,
       });
     }
