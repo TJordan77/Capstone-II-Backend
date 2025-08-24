@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const { Op } = require("sequelize");
-// Just incase we want the badge routes to require auth later:
 // const { requireAuth } = require("../middleware/authMiddleware");
 
 const {
@@ -16,7 +15,6 @@ const {
 /* ===========================
    Helpers (kept local/minimal)
    =========================== */
-
 function pickBadge(b) {
   if (!b) return null;
   return {
@@ -123,16 +121,9 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
     return res.status(400).json({ error: "Invalid user id" });
   }
   try {
-    // First try via association include (if the association alias exists)
+    // Try via association include (if alias exists)
     const user = await User.findByPk(userId, {
-      include: [
-        {
-          model: Badge,
-          as: "badges",
-          // IMPORTANT: your join model has `earnedAt` (timestamps: false)
-          through: { attributes: ["earnedAt"] },
-        },
-      ],
+      include: [{ model: Badge, as: "badges", through: { attributes: ["earnedAt"] } }],
       attributes: ["id"],
     });
 
@@ -142,7 +133,7 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
       const badges = user.badges.map((b) => ({
         ...pickBadge(b),
         // prefer the join-table timestamp if available
-        earnedAt: b.UserBadge?.earnedAt || null,
+        earnedAt: b.UserBadge?.earnedAt || b.createdAt,
       }));
       shaped = badges;
     }
@@ -164,7 +155,7 @@ router.get("/user/:userId", /* requireAuth, */ async (req, res) => {
 
       shaped = badges.map((b) => ({
         ...pickBadge(b),
-        earnedAt: earnedAtById.get(b.id) || null,
+        earnedAt: earnedAtById.get(b.id),
       }));
     }
 
@@ -280,7 +271,7 @@ router.delete("/:id", /* requireAuth, */ async (req, res) => {
   }
 });
 
-/* ===== Manual grant (optional; play flow can auto-grant) ===== */
+/* ===== Manual grant (optional) ===== */
 
 // POST /api/badges/grant
 // Body: { userId, badgeId }
@@ -304,17 +295,15 @@ router.post("/grant", /* requireAuth, */ async (req, res) => {
 
     const [row, created] = await UserBadge.findOrCreate({
       where: { userId, badgeId },
-      // ensure we actually set the timestamp (no createdAt when timestamps:false)
       defaults: { userId, badgeId, earnedAt: new Date() },
     });
 
-    // If it already existed and earnedAt is null for some reason, backfill it
+    // Backfill earnedAt if missing on an existing row
     if (!created && !row.earnedAt) {
       row.earnedAt = new Date();
       await row.save();
     }
 
-    // Return the badge details with earnedAt timestamp
     const payload = {
       ...pickBadge(badge),
       earnedAt: row.earnedAt,
