@@ -52,7 +52,7 @@ function pickHunt(h) {
 }
 
 function slugifyName(name = "") {
-  return String(name)
+  return (name || "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
@@ -84,33 +84,23 @@ router.get("/:id", /* requireAuth, */ async (req, res) => {
 router.get("/:id/badges", /* requireAuth, */ async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
+
   try {
-    // Read from the join table, then fetch the Badge rows explicitly.
-    const links = await UserBadge.findAll({
+    const rows = await UserBadge.findAll({
       where: { userId: id },
-      attributes: ["badgeId", "earnedAt"], // use earnedAt, not createdAt
-      order: [["earnedAt", "DESC"]],
+      include: [{ model: Badge }],
+      order: [["id", "ASC"]],
     });
 
-    if (!links.length) return res.json([]);
+    const badges = rows.map((row) => ({
+      id: row.Badge.id,
+      name: row.Badge.name || row.Badge.title,
+      description: row.Badge.description || "",
+      imageUrl: getBadgeIcon(row.Badge),
+      checkpointId: row.Badge.checkpointId,
+    }));
 
-    const badgeIds = [...new Set(links.map((l) => l.badgeId))];
-    const badges = await Badge.findAll({ where: { id: badgeIds } });
-
-    // Map to a uniform shape the UI expects
-    const byId = new Map(badges.map((b) => [b.id, b]));
-    const results = links
-      .map((l) => byId.get(l.badgeId))
-      .filter(Boolean)
-      .map((b) => ({
-        id: b.id,
-        name: b.name,
-        description: b.description || "",
-        imageUrl: getBadgeIcon(b),
-        earnedAt: links.find((l) => l.badgeId === b.id)?.earnedAt || null,
-      }));
-
-    res.json(results);
+    res.json(badges);
   } catch (e) {
     console.error("GET /api/users/:id/badges failed:", e);
     res.status(500).json({ error: "Failed to load badges" });
@@ -127,6 +117,7 @@ router.get("/:id/hunts/created", /* requireAuth, */ async (req, res) => {
       where: { creatorId: id },
       order: [["createdAt", "DESC"]],
     });
+
     res.json(hunts.map(pickHunt));
   } catch (e) {
     console.error("GET /api/users/:id/hunts/created failed:", e);
@@ -140,30 +131,19 @@ router.get("/:id/hunts/joined", /* requireAuth, */ async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Invalid user id" });
 
   try {
-    // UserHunt has no createdAt; order by startedAt
     const joins = await UserHunt.findAll({
       where: { userId: id },
       order: [["startedAt", "DESC"]],
     });
 
-    const results = [];
+    const hunts = [];
     for (const j of joins) {
       const h = await Hunt.findByPk(j.huntId);
       if (!h) continue;
-
-      const solved = await UserCheckpointProgress.count({
-        where: { userHuntId: j.id, solvedAt: { [Op.ne]: null } },
-      });
-
-      results.push({
-        ...pickHunt(h),
-        userHuntId: j.id,
-        joinedAt: j.startedAt || null,
-        completedAt: j.completedAt,
-        solvedCount: solved,
-      });
+      hunts.push(pickHunt(h));
     }
-    res.json(results);
+
+    res.json(hunts);
   } catch (e) {
     console.error("GET /api/users/:id/hunts/joined failed:", e);
     res.status(500).json({ error: "Failed to load joined hunts" });
@@ -211,6 +191,63 @@ router.get("/:id/overview", /* requireAuth, */ async (req, res) => {
   } catch (e) {
     console.error("GET /api/users/:id/overview failed:", e);
     res.status(500).json({ error: "Failed to load player overview" });
+  }
+});
+
+// GET /users/:id/certificate/:huntId -> returns an SVG certificate
+router.get("/:id/certificate/:huntId", /* requireAuth, */ async (req, res) => {
+  const userId = Number(req.params.id);
+  const huntId = Number(req.params.huntId);
+  if (!Number.isFinite(userId) || !Number.isFinite(huntId)) {
+    return res.status(400).json({ error: "Invalid id(s)" });
+  }
+  try {
+    const [user, hunt, uh] = await Promise.all([
+      User.findByPk(userId),
+      Hunt.findByPk(huntId),
+      UserHunt.findOne({ where: { userId, huntId } }),
+    ]);
+    if (!user || !hunt) return res.status(404).json({ error: "Not found" });
+    if (!uh || !uh.completedAt) return res.status(403).json({ error: "Certificate available after completion" });
+
+    const completed = new Date(uh.completedAt).toLocaleDateString();
+    const duration = uh.totalTimeSeconds != null ? `${Math.floor(uh.totalTimeSeconds/60)}m ${uh.totalTimeSeconds%60}s` : "—";
+
+    // Simple inline SVG; client may download or display directly
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e7a7e"/>
+      <stop offset="100%" stop-color="#0da595"/>
+    </linearGradient>
+    <style>
+      .h1 { font: 700 64px sans-serif; fill: #ffd23a; letter-spacing: 1px; }
+      .h2 { font: 600 36px sans-serif; fill: #e9f6ee; }
+      .body { font: 400 24px sans-serif; fill: #e9f6ee; }
+      .muted { font: 400 18px sans-serif; fill: #c9ece8; }
+      .box { stroke: #ffd23a; stroke-width: 6; fill: rgba(0,0,0,0.08) }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1200" height="800" fill="url(#g)"/>
+  <rect x="40" y="40" width="1120" height="720" rx="24" class="box"/>
+  <text x="600" y="180" text-anchor="middle" class="h1">SideQuest Certificate</text>
+  <text x="600" y="260" text-anchor="middle" class="h2">Awarded to</text>
+  <text x="600" y="320" text-anchor="middle" class="h1" style="font-size:48px">${(user.username || (user.firstName + " " + user.lastName)).toUpperCase()}</text>
+  <text x="600" y="400" text-anchor="middle" class="h2">for completing</text>
+  <text x="600" y="460" text-anchor="middle" class="h1" style="font-size:52px">${(hunt.title || "Untitled Hunt").toUpperCase()}</text>
+  <text x="600" y="520" text-anchor="middle" class="body">Completed on ${completed} • Time ${duration}</text>
+  <text x="600" y="580" text-anchor="middle" class="muted">Certificate ID: U${user.id}-H${hunt.id}</text>
+</svg>`;
+
+    if (String(req.query.download || "") === "1") {
+      res.setHeader("Content-Disposition", `attachment; filename="certificate-${user.id}-${hunt.id}.svg"`);
+    }
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+    res.send(svg);
+  } catch (e) {
+    console.error("GET /users/:id/certificate/:huntId failed:", e);
+    res.status(500).json({ error: "Failed to generate certificate" });
   }
 });
 
