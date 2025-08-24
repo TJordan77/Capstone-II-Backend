@@ -6,6 +6,12 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const app = express();
 
+// Need this sily app to accept my profile pics lmao
+app.use(express.json({ limit: "4mb" }));
+app.use(express.urlencoded({ extended: true, limit: "4mb" }));
+
+app.use(cookieParser());
+
 //Removed duplicate CORS policy
 
 app.set('trust proxy', 1); // so "secure" cookies behave behind Vercel's proxy
