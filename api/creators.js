@@ -17,7 +17,7 @@ const router = require("express").Router();
 const { Op } = require("sequelize");
 
 // Pull models from central db index.
-const { sequelize, Hunt, UserHunt } = require("../database");
+const { sequelize, Hunt, UserHunt, User, UserBadge } = require("../database");
 
 // May add middleware in since this is tied to certain users for view
 // const { requireAuth } = require("../middleware/authMiddleware");
@@ -29,91 +29,34 @@ function computeIsActive(hunt, now = new Date()) {
   return true; // default to active if unspecified
 }
 
-// Get active hunt ids for a creator.
-async function getActiveHuntIdsForCreator(creatorId) {
-  const activeHunts = await Hunt.findAll({
-    where: {
-      creatorId,
-      [Op.or]: [{ isActive: true }, { endsAt: { [Op.gt]: new Date() } }],
-    },
-    attributes: ["id"],
-  });
-  return activeHunts.map((h) => h.id);
-}
-
-// Players count per huntId using UserHunt.
-// Swap the SQL if your table is different (example provided below).
-async function getPlayersCountByHunt(huntIds) {
-  if (!huntIds.length) return {};
-
-  // Using UserHunt (userId, huntId)
-  const [rows] = await sequelize.query(
-    `
-    SELECT "huntId", COUNT(DISTINCT "userId")::int AS players
-    FROM "UserHunts"
-    WHERE "huntId" = ANY(:ids)
-    GROUP BY "huntId"
-    `,
-    { replacements: { ids: huntIds } }
-  );
-
-  /* In case LeaderboardEntry is better:
-    const [rows] = await sequelize.query(
-      `
-      SELECT "huntId", COUNT(DISTINCT "userId")::int AS players
-      FROM "LeaderboardEntries"
-      WHERE "huntId" = ANY(:ids)
-      GROUP BY "huntId"
-      `,
-      { replacements: { ids: huntIds } }
-    );
-
-    return rows.reduce((acc, r) => {
-      acc[r.huntId] = r.players;
-      return acc;
-    }, {});
-  */
-
-  // return the UserHunt-based counts by default
-  return rows.reduce((acc, r) => {
-    acc[r.huntId] = r.players;
-    return acc;
-  }, {});
-}
-
 // GET /api/creators/:creatorId/stats
-//  Returns { total, activePlayers, completed }
 router.get("/:creatorId/stats", /* requireAuth, */ async (req, res) => {
   const { creatorId } = req.params;
-
   try {
-    // Total hunts authored by creator
     const total = await Hunt.count({ where: { creatorId } });
 
-    // Active hunts authored by creator
-    const activeIds = await getActiveHuntIdsForCreator(creatorId);
+    // Active players = distinct users joined across active hunts
+    const hunts = await Hunt.findAll({
+      where: { creatorId },
+      attributes: ["id", "isActive", "endsAt"],
+    });
 
-    // Distinct players across active hunts (via UserHunt)
+    const now = new Date();
+    const activeHuntIds = hunts
+      .filter((h) => computeIsActive(h, now))
+      .map((h) => h.id);
+
     let activePlayers = 0;
-    if (activeIds.length) {
-      const [rowset] = await sequelize.query(
-        `
-        SELECT COUNT(DISTINCT "userId")::int AS count
-        FROM "UserHunts"
-        WHERE "huntId" = ANY(:ids)
-        `,
-        { replacements: { ids: activeIds } }
-      );
-      activePlayers = rowset?.[0]?.count || 0;
+    if (activeHuntIds.length > 0) {
+      const distinct = await UserHunt.findAll({
+        attributes: ["userId"],
+        where: { huntId: activeHuntIds },
+        group: ["userId"],
+      });
+      activePlayers = distinct.length;
     }
 
-    // Completed hunts: not active (explicit false or ended in the past)
-    const completed = await Hunt.count({
-      where: {
-        creatorId,
-        [Op.or]: [{ isActive: false }, { endsAt: { [Op.lte]: new Date() } }],
-      },
-    });
+    const completed = hunts.filter((h) => !computeIsActive(h, now)).length;
 
     res.json({ total, activePlayers, completed });
   } catch (err) {
@@ -144,9 +87,17 @@ router.get("/:creatorId/hunts", /* requireAuth, */ async (req, res) => {
 
     const ids = hunts.map((h) => h.id);
     const countsById = await getPlayersCountByHunt(ids);
+
+    const total = await Hunt.count({ where: { creatorId } });
     const now = new Date();
 
-    const payload = hunts.map((h) => ({
+    const stats = {
+      total,
+      active: hunts.filter((h) => computeIsActive(h, now)).length,
+      inactive: hunts.filter((h) => !computeIsActive(h, now)).length,
+    };
+
+    const huntsPayload = hunts.map((h) => ({
       id: h.id,
       title: h.title,
       description: h.description,
@@ -154,61 +105,37 @@ router.get("/:creatorId/hunts", /* requireAuth, */ async (req, res) => {
       playersCount: countsById[h.id] || 0,
     }));
 
-    res.json(payload);
+    res.json({ stats, hunts: huntsPayload });
   } catch (err) {
     console.error("GET /creators/:creatorId/hunts error:", err);
-    res.status(500).json({ error: "Failed to load creator hunts" });
+    res.status(500).json({ error: "Failed to load hunts" });
   }
 });
 
 /* GET /api/creators/:creatorId/overview
-   Convenience endpoint: { stats, hunts }
-   Accepts same pagination params as /hunts
- */
+   returns { stats, hunts } where stats is same as /stats and hunts is the first 25
+*/
 router.get("/:creatorId/overview", /* requireAuth, */ async (req, res) => {
   const { creatorId } = req.params;
-  const limit = Math.min(parseInt(req.query.limit || "50", 10), 200);
-  const offset = Math.max(parseInt(req.query.offset || "0", 10), 0);
-
   try {
-    // Stats
     const total = await Hunt.count({ where: { creatorId } });
-    const activeIds = await getActiveHuntIdsForCreator(creatorId);
 
-    let activePlayers = 0;
-    if (activeIds.length) {
-      const [rowset] = await sequelize.query(
-        `
-        SELECT COUNT(DISTINCT "userId")::int AS count
-        FROM "UserHunts"
-        WHERE "huntId" = ANY(:ids)
-        `,
-        { replacements: { ids: activeIds } }
-      );
-      activePlayers = rowset?.[0]?.count || 0;
-    }
-
-    const completed = await Hunt.count({
-      where: {
-        creatorId,
-        [Op.or]: [{ isActive: false }, { endsAt: { [Op.lte]: new Date() } }],
-      },
-    });
-
-    const stats = { total, activePlayers, completed };
-
-    // Hunts
     const hunts = await Hunt.findAll({
       where: { creatorId },
-      order: [["updatedAt", "DESC"]],
       attributes: ["id", "title", "description", "isActive", "endsAt"],
-      limit,
-      offset,
+      order: [["updatedAt", "DESC"]],
+      limit: 25,
     });
 
     const ids = hunts.map((h) => h.id);
     const countsById = await getPlayersCountByHunt(ids);
+
     const now = new Date();
+    const stats = {
+      total,
+      active: hunts.filter((h) => computeIsActive(h, now)).length,
+      completed: hunts.filter((h) => !computeIsActive(h, now)).length,
+    };
 
     const huntsPayload = hunts.map((h) => ({
       id: h.id,
@@ -222,6 +149,62 @@ router.get("/:creatorId/overview", /* requireAuth, */ async (req, res) => {
   } catch (err) {
     console.error("GET /creators/:creatorId/overview error:", err);
     res.status(500).json({ error: "Failed to load creator overview" });
+  }
+});
+
+async function getPlayersCountByHunt(huntIds) {
+  if (!huntIds || huntIds.length === 0) return {};
+  const rows = await UserHunt.findAll({
+    attributes: ["huntId", [sequelize.fn("COUNT", sequelize.col("id")), "cnt"]],
+    where: { huntId: huntIds },
+    group: ["huntId"],
+  });
+  const map = {};
+  for (const r of rows) {
+    map[r.huntId] = parseInt(r.get("cnt"), 10);
+  }
+  return map;
+}
+
+/* GET /api/creators/:creatorId/completions
+   Returns recent hunt completions for this creator's hunts
+   Response shape: [{ username, userId, huntId, huntTitle, completedAt, totalTimeSeconds, badgesCount }]
+*/
+router.get("/:creatorId/completions", /* requireAuth, */ async (req, res) => {
+  const { creatorId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit || "25", 10), 100);
+  try {
+    const hunts = await Hunt.findAll({ where: { creatorId }, attributes: ["id", "title"] });
+    const byId = new Map(hunts.map(h => [h.id, h]));
+    const huntIds = hunts.map(h => h.id);
+    if (huntIds.length === 0) return res.json([]);
+
+    const rows = await UserHunt.findAll({
+      where: { huntId: huntIds, status: "completed" },
+      order: [["completedAt","DESC"]],
+      limit,
+      include: [{ model: User, as: "user", attributes: ["id","username","email"] }],
+    });
+
+    const out = await Promise.all(rows.map(async (r) => {
+      // badges count for this user
+      const badgesCount = await UserBadge.count({ where: { userId: r.userId } });
+      const h = byId.get(r.huntId);
+      return {
+        username: r.user?.username || `User ${r.userId}`,
+        userId: r.userId,
+        huntId: r.huntId,
+        huntTitle: h?.title || `Hunt ${r.huntId}`,
+        completedAt: r.completedAt,
+        totalTimeSeconds: r.totalTimeSeconds,
+        badgesCount,
+      };
+    }));
+
+    res.json(out);
+  } catch (e) {
+    console.error("GET /api/creators/:creatorId/completions failed:", e);
+    res.status(500).json({ error: "Failed to load completions" });
   }
 });
 
