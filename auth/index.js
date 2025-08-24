@@ -367,6 +367,10 @@ router.get("/me", (req, res) => {
       // Return both names for compatibility
       const u = dbUser.toJSON();
       u.avatarUrl = u.profilePicture || null;
+      
+      // avoid stale/cached /me responses across sessions
+      res.set("Cache-Control", "private, no-store, must-revalidate");
+      res.set("Vary", "Cookie");
 
       // Return normalized user object
       res.send({ user: dbUser }); 
@@ -377,7 +381,7 @@ router.get("/me", (req, res) => {
   });
 });
 
-// --- ADDITION: profile update route ---
+// Profile updater
 router.put("/profile", authenticateJWT, async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -393,29 +397,27 @@ router.put("/profile", authenticateJWT, async (req, res) => {
       u.firstName = parts.shift() || u.firstName;
       u.lastName = parts.length ? parts.join(" ") : u.lastName;
     }
-
-    if (typeof email === "string") {
-      u.email = email.trim() || null;
-    }
-
-    if (typeof profilePicture === "string" && profilePicture.trim()) {
-      u.profilePicture = profilePicture.trim();
+    if (typeof email === "string" && email.trim()) u.email = email.trim();
+    if (typeof profilePicture === "string" && profilePicture.length) {
+      u.profilePicture = profilePicture;
     }
 
     await u.save();
 
-    res.send({
-      message: "Profile updated",
-      user: {
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        profilePicture: u.profilePicture || null,
-        avatarUrl: u.profilePicture || null,
-      },
-    });
+    const out = {
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      profilePicture: u.profilePicture || null,
+      avatarUrl: u.profilePicture || null, // alias for any UI reading avatarUrl
+    };
+
+    res.set("Cache-Control", "private, no-store, must-revalidate");
+    res.set("Vary", "Cookie");
+
+    res.send({ message: "Profile updated", user: out });
   } catch (e) {
     console.error("PUT /api/auth/profile failed:", e);
     res.status(500).send({ error: "Failed to update profile" });
