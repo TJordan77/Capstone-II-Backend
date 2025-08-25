@@ -330,6 +330,18 @@ router.post(
       // Detect first-time solve for this user/checkpoint
       const wasFirstSolve = wasCorrect && !progress.solvedAt; // before we set it
 
+      // NEW: count solved BEFORE marking this CP solved, so the current solve isn't included
+      let solvedBeforeInThisHunt = 0;
+      if (wasFirstSolve) {
+        solvedBeforeInThisHunt = await UserCheckpointProgress.count({
+          where: {
+            userHuntId: uh.id,
+            solvedAt: { [Op.ne]: null },
+          },
+          transaction: t,
+        });
+      }
+
       if (wasCorrect && !progress.solvedAt) {
         progress.solvedAt = new Date();
       }
@@ -358,35 +370,20 @@ router.post(
       }
 
       // Award Trailblazer for the user's FIRST solved checkpoint IN THIS HUNT
-      if (wasFirstSolve) {
+      if (wasFirstSolve && solvedBeforeInThisHunt === 0) {
         try {
-          const solvedBeforeInThisHunt = await UserCheckpointProgress.count({
-            where: {
-              userHuntId: uh.id,
-              solvedAt: { [Op.ne]: null },
-            },
+          // match by title only (your badges table columns)
+          const trail = await Badge.findOne({
+            where: { title: { [Op.iLike]: "%trailblazer%" } },
             transaction: t,
           });
-          if (solvedBeforeInThisHunt === 0) {
-            const trail = await Badge.findOne({
-              where: {
-                [Op.or]: [
-                  { name: "Trailblazer" },
-                  { title: "Trailblazer" },
-                  { slug: "trailblazer" },
-                  { code: "trailblazer" },
-                ],
-              },
+          if (trail) {
+            const [, created] = await UserBadge.findOrCreate({
+              where: { userId: uh.userId, badgeId: trail.id },
+              defaults: { userId: uh.userId, badgeId: trail.id, earnedAt: new Date() },
               transaction: t,
             });
-            if (trail) {
-              const [, created] = await UserBadge.findOrCreate({
-                where: { userId: uh.userId, badgeId: trail.id },
-                defaults: { userId: uh.userId, badgeId: trail.id, earnedAt: new Date() },
-                transaction: t,
-              });
-              if (created) awardedBadges.push({ badgeId: trail.id, reason: "first_checkpoint" });
-            }
+            if (created) awardedBadges.push({ badgeId: trail.id, reason: "first_checkpoint" });
           }
         } catch (e) {
           console.warn("Trailblazer grant failed (non-blocking):", e?.message || e);
@@ -416,14 +413,7 @@ router.post(
             const userId = uh.userId;
 
             const pf = await Badge.findOne({
-              where: {
-                [Op.or]: [
-                  { name: "Pathfinder" },
-                  { title: "Pathfinder" },
-                  { slug: "pathfinder" },
-                  { code: "pathfinder" },
-                ],
-              },
+              where: { title: { [Op.iLike]: "%pathfinder%" } },
               transaction: t,
             });
             if (pf) {
@@ -438,14 +428,7 @@ router.post(
             const SPEEDRUN_SECS = 30 * 60;
             if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
               const sr = await Badge.findOne({
-                where: {
-                  [Op.or]: [
-                    { name: "Speedrunner" },
-                    { title: "Speedrunner" },
-                    { slug: "speedrunner" },
-                    { code: "speedrunner" },
-                  ],
-                },
+                where: { title: { [Op.iLike]: "%speedrunner%" } },
                 transaction: t,
               });
               if (sr) {
@@ -461,14 +444,7 @@ router.post(
             const count = await UserBadge.count({ where: { userId }, transaction: t });
             if (count >= 5) {
               const bc = await Badge.findOne({
-                where: {
-                  [Op.or]: [
-                    { name: "Badge Collector" },
-                    { title: "Badge Collector" },
-                    { slug: "badge-collector" },
-                    { code: "badge-collector" },
-                  ],
-                },
+                where: { title: { [Op.iLike]: "%badge collector%" } },
                 transaction: t,
               });
               if (bc) {
