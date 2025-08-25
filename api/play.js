@@ -11,7 +11,7 @@ const {
   UserBadge,
 } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware");
-const { Op } = require("sequelize"); // ★ NEW
+const { Op } = require("sequelize"); // For lookups
 
 // A little answer normalizer
 const norm = (s) => (s || "").trim().toLowerCase();
@@ -357,25 +357,17 @@ router.post(
         }
       }
 
-      // Award Trailblazer for the user's first ever solved checkpoint
+      // Award Trailblazer for the user's FIRST solved checkpoint IN THIS HUNT
       if (wasFirstSolve) {
         try {
-          // Count ALL solved checkpoints across this user's UserHunt rows
-          const hunts = await UserHunt.findAll({
-            where: { userId: uh.userId },
-            attributes: ["id"],
-            transaction: t,
-          });
-          const userHuntIds = hunts.map((h) => h.id);
-          const solvedBefore = await UserCheckpointProgress.count({
+          const solvedBeforeInThisHunt = await UserCheckpointProgress.count({
             where: {
-              userHuntId: userHuntIds.length ? { [Op.in]: userHuntIds } : -1,
+              userHuntId: uh.id,
               solvedAt: { [Op.ne]: null },
             },
             transaction: t,
           });
-
-          if (solvedBefore === 0) {
+          if (solvedBeforeInThisHunt === 0) {
             const trail = await Badge.findOne({
               where: {
                 [Op.or]: [
@@ -420,7 +412,6 @@ router.post(
           }
           await uh.save({ transaction: t });
 
-          // Derived/completion-based badges (Pathfinder, Speedrunner, Badge Collector)
           try {
             const userId = uh.userId;
 
@@ -505,8 +496,8 @@ router.post(
           : null,
         nextCheckpointId,
         finished: wasCorrect && !nextCheckpointId,
-        badge: null,            // keep legacy field
-        awardedBadges,          // tell client what unlocked
+        badge: null,
+        awardedBadges, // client popup hook
       });
     } catch (err) {
       await t.rollback();
