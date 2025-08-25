@@ -11,6 +11,7 @@ const {
   UserBadge,
 } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware");
+const { Op } = require("sequelize"); // NEW: for solvedAt != null lookups
 
 // A little answer normalizer
 const norm = (s) => (s || "").trim().toLowerCase();
@@ -326,14 +327,17 @@ router.post(
 
       progress.attemptsCount += 1;
 
-      // --- NEW: detect first-time solve for this user/checkpoint
+      // Detect first-time solve for this user/checkpoint
       const wasFirstSolve = wasCorrect && !progress.solvedAt; // before we set it
 
       if (wasCorrect && !progress.solvedAt) {
         progress.solvedAt = new Date();
       }
 
-      // --- NEW: grant checkpoint-specific badge(s) on first correct solve
+      // Awarded badges accumulator (returned to client)
+      const awardedBadges = [];
+
+      // Grant checkpoint-specific badge(s) on first correct solve
       if (wasFirstSolve) {
         try {
           const checkpointBadges = await Badge.findAll({
@@ -341,14 +345,47 @@ router.post(
             transaction: t,
           });
           for (const b of checkpointBadges) {
-            await UserBadge.findOrCreate({
+            const [, created] = await UserBadge.findOrCreate({
               where: { userId: uh.userId, badgeId: b.id },
-              defaults: { userId: uh.userId, badgeId: b.id },
+              defaults: { userId: uh.userId, badgeId: b.id, earnedAt: new Date() },
               transaction: t,
             });
+            if (created) awardedBadges.push({ badgeId: b.id, reason: "checkpoint" });
           }
         } catch (e) {
           console.warn("Checkpoint badge grant failed (non-blocking):", e?.message || e);
+        }
+      }
+
+      // Award Trailblazer for the user's first ever solved checkpoint
+      if (wasFirstSolve) {
+        try {
+          const solvedBefore = await UserCheckpointProgress.count({
+            where: { solvedAt: { [Op.ne]: null } },
+            include: [{
+              model: UserHunt,
+              required: true,
+              where: { userId: uh.userId },
+            }],
+            transaction: t,
+          });
+
+          if (solvedBefore === 0) {
+            const trail = await Badge.findOne({
+              where: { title: "Trailblazer" },
+              transaction: t,
+            });
+            if (trail) {
+              const [, created] = await UserBadge.findOrCreate({
+                where: { userId: uh.userId, badgeId: trail.id },
+                defaults: { userId: uh.userId, badgeId: trail.id, earnedAt: new Date() },
+                transaction: t,
+              });
+              if (created) awardedBadges.push({ badgeId: trail.id, reason: "first_checkpoint" });
+            }
+          }
+        } catch (e) {
+          console.warn("Trailblazer grant failed (non-blocking):", e?.message || e);
         }
       }
 
@@ -371,26 +408,30 @@ router.post(
           }
           await uh.save({ transaction: t });
 
+          // Derived/completion-based badges (Pathfinder, Speedrunner, Badge Collector)
           try {
             const userId = uh.userId;
+
             const pf = await Badge.findOne({ where: { title: "Pathfinder" }, transaction: t });
             if (pf) {
-              await UserBadge.findOrCreate({
+              const [, created] = await UserBadge.findOrCreate({
                 where: { userId, badgeId: pf.id },
-                defaults: { userId, badgeId: pf.id },
+                defaults: { userId, badgeId: pf.id, earnedAt: new Date() },
                 transaction: t,
               });
+              if (created) awardedBadges.push({ badgeId: pf.id, reason: "hunt_completed" });
             }
 
             const SPEEDRUN_SECS = 30 * 60;
             if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
               const sr = await Badge.findOne({ where: { title: "Speedrunner" }, transaction: t });
               if (sr) {
-                await UserBadge.findOrCreate({
+                const [, created] = await UserBadge.findOrCreate({
                   where: { userId, badgeId: sr.id },
-                  defaults: { userId, badgeId: sr.id },
+                  defaults: { userId, badgeId: sr.id, earnedAt: new Date() },
                   transaction: t,
                 });
+                if (created) awardedBadges.push({ badgeId: sr.id, reason: "speedrun" });
               }
             }
 
@@ -398,11 +439,12 @@ router.post(
             if (count >= 5) {
               const bc = await Badge.findOne({ where: { title: "Badge Collector" }, transaction: t });
               if (bc) {
-                await UserBadge.findOrCreate({
+                const [, created] = await UserBadge.findOrCreate({
                   where: { userId, badgeId: bc.id },
-                  defaults: { userId, badgeId: bc.id },
+                  defaults: { userId, badgeId: bc.id, earnedAt: new Date() },
                   transaction: t,
                 });
+                if (created) awardedBadges.push({ badgeId: bc.id, reason: "collection_threshold" });
               }
             }
           } catch (e) {
@@ -421,7 +463,8 @@ router.post(
           : null,
         nextCheckpointId,
         finished: wasCorrect && !nextCheckpointId,
-        badge: null,
+        badge: null,            // kept for backward compatibility
+        awardedBadges,          // NEW: detail which badges unlocked now
       });
     } catch (err) {
       await t.rollback();
