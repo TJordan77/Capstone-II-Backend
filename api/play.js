@@ -11,7 +11,7 @@ const {
   UserBadge,
 } = require("../database");
 const { requireAuth } = require("../middleware/authMiddleware");
-const { Op } = require("sequelize"); // NEW: for solvedAt != null lookups
+const { Op } = require("sequelize"); // ★ NEW
 
 // A little answer normalizer
 const norm = (s) => (s || "").trim().toLowerCase();
@@ -360,19 +360,31 @@ router.post(
       // Award Trailblazer for the user's first ever solved checkpoint
       if (wasFirstSolve) {
         try {
+          // Count ALL solved checkpoints across this user's UserHunt rows
+          const hunts = await UserHunt.findAll({
+            where: { userId: uh.userId },
+            attributes: ["id"],
+            transaction: t,
+          });
+          const userHuntIds = hunts.map((h) => h.id);
           const solvedBefore = await UserCheckpointProgress.count({
-            where: { solvedAt: { [Op.ne]: null } },
-            include: [{
-              model: UserHunt,
-              required: true,
-              where: { userId: uh.userId },
-            }],
+            where: {
+              userHuntId: userHuntIds.length ? { [Op.in]: userHuntIds } : -1,
+              solvedAt: { [Op.ne]: null },
+            },
             transaction: t,
           });
 
           if (solvedBefore === 0) {
             const trail = await Badge.findOne({
-              where: { title: "Trailblazer" },
+              where: {
+                [Op.or]: [
+                  { name: "Trailblazer" },
+                  { title: "Trailblazer" },
+                  { slug: "trailblazer" },
+                  { code: "trailblazer" },
+                ],
+              },
               transaction: t,
             });
             if (trail) {
@@ -412,7 +424,17 @@ router.post(
           try {
             const userId = uh.userId;
 
-            const pf = await Badge.findOne({ where: { title: "Pathfinder" }, transaction: t });
+            const pf = await Badge.findOne({
+              where: {
+                [Op.or]: [
+                  { name: "Pathfinder" },
+                  { title: "Pathfinder" },
+                  { slug: "pathfinder" },
+                  { code: "pathfinder" },
+                ],
+              },
+              transaction: t,
+            });
             if (pf) {
               const [, created] = await UserBadge.findOrCreate({
                 where: { userId, badgeId: pf.id },
@@ -424,7 +446,17 @@ router.post(
 
             const SPEEDRUN_SECS = 30 * 60;
             if (uh.totalTimeSeconds != null && uh.totalTimeSeconds <= SPEEDRUN_SECS) {
-              const sr = await Badge.findOne({ where: { title: "Speedrunner" }, transaction: t });
+              const sr = await Badge.findOne({
+                where: {
+                  [Op.or]: [
+                    { name: "Speedrunner" },
+                    { title: "Speedrunner" },
+                    { slug: "speedrunner" },
+                    { code: "speedrunner" },
+                  ],
+                },
+                transaction: t,
+              });
               if (sr) {
                 const [, created] = await UserBadge.findOrCreate({
                   where: { userId, badgeId: sr.id },
@@ -437,7 +469,17 @@ router.post(
 
             const count = await UserBadge.count({ where: { userId }, transaction: t });
             if (count >= 5) {
-              const bc = await Badge.findOne({ where: { title: "Badge Collector" }, transaction: t });
+              const bc = await Badge.findOne({
+                where: {
+                  [Op.or]: [
+                    { name: "Badge Collector" },
+                    { title: "Badge Collector" },
+                    { slug: "badge-collector" },
+                    { code: "badge-collector" },
+                  ],
+                },
+                transaction: t,
+              });
               if (bc) {
                 const [, created] = await UserBadge.findOrCreate({
                   where: { userId, badgeId: bc.id },
@@ -463,8 +505,8 @@ router.post(
           : null,
         nextCheckpointId,
         finished: wasCorrect && !nextCheckpointId,
-        badge: null,            // kept for backward compatibility
-        awardedBadges,          // NEW: detail which badges unlocked now
+        badge: null,            // keep legacy field
+        awardedBadges,          // tell client what unlocked
       });
     } catch (err) {
       await t.rollback();
